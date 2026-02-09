@@ -117,98 +117,16 @@ static void refreshDeviceListFromScanResults() {
 // BLE client callback
 class ClientCallbacks : public NimBLEClientCallbacks {
   void onConnect(NimBLEClient* pclient) override {
-    Serial.println("BLE client connected, discovering services...");
-    bleState = BLEState::CONNECTING; // Keep as connecting until services are fully set up
+    Serial.println("BLE client connected, requesting security...");
+    bleState = BLEState::CONNECTING; // Keep as connecting until pairing is complete
     
-    // Discover services after connection
-    if (pclient->getServices(true)) { // true for doDiscover
-      Serial.println("Services discovered successfully");
-      
-      // Find HID service
-      pRemoteService = pclient->getService(hidServiceUUID);
-      if (!pRemoteService) {
-        Serial.println("HID service not found");
-        bleState = BLEState::DISCONNECTED;
-        pclient->disconnect();
-        return;
-      }
-
-      // Find input report characteristic
-      pInputReportChar = nullptr;
-      std::vector<NimBLERemoteCharacteristic*>* chars = pRemoteService->getCharacteristics();
-      for (auto& chr : *chars) {
-        if (chr->getUUID() != reportUUID) continue;
-
-        std::vector<NimBLERemoteDescriptor*>* descs = chr->getDescriptors();
-        for (auto& desc : *descs) {
-          if (desc->getUUID() == NimBLEUUID("2908")) {
-            std::string refData = desc->readValue();
-            if (refData.length() >= 2 && (uint8_t)refData[1] == 1) {
-              pInputReportChar = chr;
-              break;
-            }
-          }
-        }
-        if (pInputReportChar) break;
-      }
-
-      // Fallback: any report char with notify
-      if (!pInputReportChar) {
-        for (auto& chr : *chars) {
-          if (chr->getUUID() == reportUUID && chr->canNotify()) {
-            pInputReportChar = chr;
-            break;
-          }
-        }
-      }
-
-      // Fallback: boot keyboard input
-      if (!pInputReportChar) {
-        pInputReportChar = pRemoteService->getCharacteristic(bootKeyboardInUUID);
-      }
-
-      if (!pInputReportChar) {
-        Serial.println("No input report found");
-        bleState = BLEState::DISCONNECTED;
-        pclient->disconnect();
-        return;
-      }
-
-      // Subscribe to notifications
-      if (!pInputReportChar->subscribe(true, onKeyboardNotify)) {
-        Serial.println("Failed to subscribe to input reports");
-        bleState = BLEState::DISCONNECTED;
-        pclient->disconnect();
-        return;
-      }
-
-      // Set report protocol mode
-      NimBLERemoteCharacteristic* pProto = pRemoteService->getCharacteristic(protocolModeUUID);
-      if (pProto) {
-        uint8_t mode = 1;
-        pProto->writeValue(&mode, 1, true);
-      }
-
-      // Store this device for future auto-reconnection
-      std::string storedAddr, storedName;
-      if (!getStoredDevice(storedAddr, storedName) || storedAddr != keyboardAddress) {
-        std::string devName = keyboardAddress;
-        for (auto& d : discoveredDevices) {
-          if (d.address == keyboardAddress) {
-            devName = d.name;
-            break;
-          }
-        }
-        storePairedDevice(keyboardAddress, devName);
-      }
-
-      Serial.println("Keyboard ready - receiving input");
-      bleState = BLEState::CONNECTED;
-      reconnectDelay = 2000; // Reset backoff on successful connection
-    } else {
-      Serial.println("Failed to discover services");
+    // Request security immediately after connection
+    Serial.println("Requesting secure connection...");
+    if (!pclient->secureConnection()) {
+      Serial.println("secureConnection() failed (pairing may not start)");
       bleState = BLEState::DISCONNECTED;
       pclient->disconnect();
+      return;
     }
   }
 
@@ -249,8 +167,8 @@ static bool tryConnect() {
     return false;
   }
 
-  // The service discovery and characteristic setup is now handled in the onConnect callback
-  // This allows for asynchronous service discovery after connection
+  // The service discovery and characteristic setup is now handled in the onAuthenticationComplete callback
+  // This allows for asynchronous service discovery after authentication
   return true;
 }
 
@@ -260,34 +178,138 @@ static uint32_t currentPasskey = 0;
 // BLE security callback
 class BleSecurityCallback : public NimBLESecurityCallbacks {
   uint32_t onPassKeyRequest() override {
-    Serial.println("Passkey request received - keyboard should display it");
-    // For "Keyboard Display" pairing, the keyboard generates the PIN
-    // We return 0 to indicate that the keyboard will display the PIN
-    uint32_t passkey = 0; // The keyboard will generate and display the PIN
+    // Host displays passkey; user types it on the keyboard
+    uint32_t passkey = (uint32_t)(random(100000, 999999)); // Generate 6-digit passkey
     currentPasskey = passkey;
-    Serial.printf("Waiting for keyboard to display passkey...\n");
+    Serial.printf("Display passkey: %06lu (type on keyboard)\n", passkey);
     return passkey;
   }
 
   void onPassKeyNotify(uint32_t passkey) override {
-    Serial.printf("Keyboard displayed passkey: %06lu - please enter this on the X4\n", passkey);
-    currentPasskey = passkey; // Store the passkey that the keyboard generated for display
+    // Some devices/stacks call this instead
+    currentPasskey = passkey;
+    Serial.printf("Passkey notify: %06lu\n", passkey);
   }
 
   bool onConfirmPIN(uint32_t passkey) override {
-    Serial.printf("Confirming passkey: %06lu\n", passkey);
+    Serial.printf("Confirm PIN: %06lu\n", passkey);
     currentPasskey = passkey;
-    return true; // Automatically confirm - in a real app, you might want user confirmation
+    return true;
   }
 
   bool onSecurityRequest() override {
-    Serial.println("Security Request - accepting");
+    Serial.println("Security request accepted");
     return true;
   }
 
   void onAuthenticationComplete(ble_gap_conn_desc* desc) override {
-    Serial.printf("Authentication complete - success: %s\n", desc->sec_state.authenticated ? "true" : "false");
-    currentPasskey = 0; // Clear the passkey after authentication
+    Serial.printf("Auth complete: encrypted=%d bonded=%d authenticated=%d\n",
+                  desc->sec_state.encrypted,
+                  desc->sec_state.bonded,
+                  desc->sec_state.authenticated);
+                  
+    if (desc->sec_state.encrypted && desc->sec_state.bonded) {
+      // Authentication successful, now discover services and set up connection
+      Serial.println("Authentication successful, discovering services...");
+      
+      // Discover services after authentication
+      if (pClient->getServices(true)) { // true for doDiscover
+        Serial.println("Services discovered successfully");
+        
+        // Find HID service
+        pRemoteService = pClient->getService(hidServiceUUID);
+        if (!pRemoteService) {
+          Serial.println("HID service not found");
+          bleState = BLEState::DISCONNECTED;
+          pClient->disconnect();
+          return;
+        }
+
+        // Find input report characteristic
+        pInputReportChar = nullptr;
+        std::vector<NimBLERemoteCharacteristic*>* chars = pRemoteService->getCharacteristics();
+        for (auto& chr : *chars) {
+          if (chr->getUUID() != reportUUID) continue;
+
+          std::vector<NimBLERemoteDescriptor*>* descs = chr->getDescriptors();
+          for (auto& desc : *descs) {
+            if (desc->getUUID() == NimBLEUUID("2908")) {
+              std::string refData = desc->readValue();
+              if (refData.length() >= 2 && (uint8_t)refData[1] == 1) {
+                pInputReportChar = chr;
+                break;
+              }
+            }
+          }
+          if (pInputReportChar) break;
+        }
+
+        // Fallback: any report char with notify
+        if (!pInputReportChar) {
+          for (auto& chr : *chars) {
+            if (chr->getUUID() == reportUUID && chr->canNotify()) {
+              pInputReportChar = chr;
+              break;
+            }
+          }
+        }
+
+        // Fallback: boot keyboard input
+        if (!pInputReportChar) {
+          pInputReportChar = pRemoteService->getCharacteristic(bootKeyboardInUUID);
+        }
+
+        if (!pInputReportChar) {
+          Serial.println("No input report found");
+          bleState = BLEState::DISCONNECTED;
+          pClient->disconnect();
+          return;
+        }
+
+        // Subscribe to notifications
+        if (!pInputReportChar->subscribe(true, onKeyboardNotify)) {
+          Serial.println("Failed to subscribe to input reports");
+          bleState = BLEState::DISCONNECTED;
+          pClient->disconnect();
+          return;
+        }
+
+        // Set report protocol mode
+        NimBLERemoteCharacteristic* pProto = pRemoteService->getCharacteristic(protocolModeUUID);
+        if (pProto) {
+          uint8_t mode = 1;
+          pProto->writeValue(&mode, 1, true);
+        }
+
+        // Store this device for future auto-reconnection
+        std::string storedAddr, storedName;
+        if (!getStoredDevice(storedAddr, storedName) || storedAddr != keyboardAddress) {
+          std::string devName = keyboardAddress;
+          for (auto& d : discoveredDevices) {
+            if (d.address == keyboardAddress) {
+              devName = d.name;
+              break;
+            }
+          }
+          storePairedDevice(keyboardAddress, devName);
+        }
+
+        Serial.println("Keyboard ready - receiving input");
+        bleState = BLEState::CONNECTED;
+        reconnectDelay = 2000; // Reset backoff on successful connection
+      } else {
+        Serial.println("Failed to discover services after authentication");
+        bleState = BLEState::DISCONNECTED;
+        pClient->disconnect();
+      }
+    } else {
+      Serial.println("Authentication failed - device not stored");
+      bleState = BLEState::DISCONNECTED;
+      pClient->disconnect();
+    }
+    
+    // Clear passkey after authentication attempt
+    currentPasskey = 0;
   }
 };
 
@@ -473,4 +495,8 @@ void clearStoredDevice() {
   storedDeviceAddress = "";
   storedDeviceName = "";
   Serial.println("Cleared stored device");
+  
+  // Also clear all stored bonds
+  NimBLEDevice::deleteAllBonds();
+  Serial.println("Cleared all stored bonds");
 }
