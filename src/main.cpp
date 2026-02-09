@@ -10,6 +10,17 @@
 #include "file_manager.h"
 #include "ui_renderer.h"
 
+// Enum for sleep reasons
+enum class SleepReason {
+  POWER_LONGPRESS,
+  IDLE_TIMEOUT,
+  MENU_ACTION
+};
+
+// Forward declarations
+void renderSleepScreen();
+void enterDeepSleep(SleepReason reason);
+
 // External variables
 extern bool autoReconnectEnabled;
 
@@ -96,14 +107,14 @@ void setup() {
   const char* title = "MicroSlate";
   int titleWidth = renderer.getTextAdvanceX(FONT_BODY, title);
   int titleX = (sw - titleWidth) / 2;
-  int titleY = sh * 0.45; // 45% down the screen
+  int titleY = sh * 0.35; // 35% down the screen (moved up)
   renderer.drawText(FONT_BODY, titleX, titleY, title, true, EpdFontFamily::BOLD);
   
   // Subtitle: "Starting..."
   const char* subtitle = "Starting...";
   int subTitleWidth = renderer.getTextAdvanceX(FONT_UI, subtitle);
   int subTitleX = (sw - subTitleWidth) / 2;
-  int subTitleY = sh * 0.58; // 58% down the screen
+  int subTitleY = sh * 0.48; // 48% down the screen (moved up)
   renderer.drawText(FONT_UI, subTitleX, subTitleY, subtitle, true);
   
   // Perform a full display refresh
@@ -332,13 +343,6 @@ void registerActivity() {
   lastActivityTime = millis();
 }
 
-// Enum for sleep reasons
-enum class SleepReason {
-  POWER_LONGPRESS,
-  IDLE_TIMEOUT,
-  MENU_ACTION
-};
-
 // Function to render the sleep screen
 void renderSleepScreen() {
   renderer.clearScreen();
@@ -350,21 +354,21 @@ void renderSleepScreen() {
   const char* title = "MicroSlate";
   int titleWidth = renderer.getTextAdvanceX(FONT_BODY, title);
   int titleX = (sw - titleWidth) / 2;
-  int titleY = sh * 0.45; // 45% down the screen
+  int titleY = sh * 0.35; // 35% down the screen (moved up)
   renderer.drawText(FONT_BODY, titleX, titleY, title, true, EpdFontFamily::BOLD);
   
   // Subtitle: "Asleep"
   const char* subtitle = "Asleep";
   int subTitleWidth = renderer.getTextAdvanceX(FONT_UI, subtitle);
   int subTitleX = (sw - subTitleWidth) / 2;
-  int subTitleY = sh * 0.58; // 58% down the screen
+  int subTitleY = sh * 0.48; // 48% down the screen (moved up)
   renderer.drawText(FONT_UI, subTitleX, subTitleY, subtitle, true);
   
   // Footer: "Hold Power to wake"
   const char* footer = "Hold Power to wake";
   int footerWidth = renderer.getTextAdvanceX(FONT_SMALL, footer);
   int footerX = (sw - footerWidth) / 2;
-  int footerY = sh - 12; // 12 pixels from bottom
+  int footerY = sh * 0.75; // 75% down the screen (moved up from bottom)
   renderer.drawText(FONT_SMALL, footerX, footerY, footer);
   
   // Perform a full display refresh to ensure the sleep screen is visible
