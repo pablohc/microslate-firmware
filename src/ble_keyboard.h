@@ -8,7 +8,8 @@ struct BleDeviceInfo {
   std::string address;
   std::string name;
   int rssi;
-  uint32_t lastSeenMs;   // NEW: from millis()
+  uint8_t addressType;    // BLE address type (public/random)
+  uint32_t lastSeenMs;    // from millis()
 };
 
 void bleSetup();

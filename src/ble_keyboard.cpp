@@ -6,6 +6,7 @@
 #include <NimBLERemoteService.h>
 #include <NimBLERemoteCharacteristic.h>
 #include <NimBLERemoteDescriptor.h>
+#include <Preferences.h>
 
 // HID service and characteristic UUIDs
 static NimBLEUUID hidServiceUUID("1812");
@@ -22,7 +23,12 @@ static NimBLERemoteCharacteristic* pInputReportChar = nullptr;
 static BLEState bleState = BLEState::DISCONNECTED;
 static bool connectToKeyboard = false;
 static std::string keyboardAddress = "";
+static uint8_t keyboardAddressType = 0; // Track address type (public/random)
+static bool needsSecureConnection = false; // Flag to request security from bleLoop()
 static uint8_t lastReport[8] = {0};
+
+// NVS storage for persistent pairing
+static Preferences prefs;
 
 // Global flag to control auto-reconnect behavior
 bool autoReconnectEnabled = true;
@@ -111,41 +117,34 @@ static void onKeyboardNotify(NimBLERemoteCharacteristic* pRemChar,
   memcpy(lastReport, newReport, 8);
 }
 
-// BLE scan callback - lightweight, NO auto-connect
-// Auto-connect only happens for stored devices via bleLoop()
-class ScanCallbacks : public NimBLEAdvertisedDeviceCallbacks {
+// Static callback instances to avoid memory leaks
+static class ScanCallbacks : public NimBLEAdvertisedDeviceCallbacks {
   void onResult(NimBLEAdvertisedDevice* dev) override {
-    Serial.println("[BLE] onResult()"); // DEBUG: confirm callback is firing
-    // Update device list in real time
+    Serial.println("[BLE] onResult()");
     BleDeviceInfo info;
     info.address = dev->getAddress().toString();
     info.name = dev->haveName() ? dev->getName() : info.address;
     info.rssi = dev->getRSSI();
-    info.lastSeenMs = millis(); // Record when seen
+    info.addressType = dev->getAddress().getType(); // Preserve address type
+    info.lastSeenMs = millis();
     upsertDevice(info);
   }
-};
+} scanCallbacks;
 
-// BLE client callback
-class ClientCallbacks : public NimBLEClientCallbacks {
+// Static client callback - no heap allocation
+static class ClientCallbacks : public NimBLEClientCallbacks {
   void onConnect(NimBLEClient* pclient) override {
-    Serial.println("BLE client connected, requesting security...");
-    bleState = BLEState::CONNECTING; // Keep as connecting until pairing is complete
-    
-    // Request security immediately after connection
-    Serial.println("Requesting secure connection...");
-    if (!pclient->secureConnection()) {
-      Serial.println("secureConnection() failed (pairing may not start)");
-      bleState = BLEState::DISCONNECTED;
-      pclient->disconnect();
-      return;
-    }
+    Serial.println("BLE client connected, will request security from main loop...");
+    bleState = BLEState::CONNECTING;
+    // Set flag so bleLoop() calls secureConnection() outside callback context
+    needsSecureConnection = true;
   }
 
   void onDisconnect(NimBLEClient* pclient) override {
     bleState = BLEState::DISCONNECTED;
     pInputReportChar = nullptr;
     pRemoteService = nullptr;
+    needsSecureConnection = false;
     memset(lastReport, 0, 8);
     lastReconnectAttempt = millis();
     Serial.println("BLE keyboard disconnected");
@@ -157,48 +156,47 @@ class ClientCallbacks : public NimBLEClientCallbacks {
                                params->latency, params->supervision_timeout);
     return true;
   }
-};
+} clientCallbacks;
 
 static bool tryConnect() {
   if (keyboardAddress.empty()) return false;
 
   bleState = BLEState::CONNECTING;
-  Serial.printf("Connecting to: %s (timeout %ds)\n", keyboardAddress.c_str(), CONNECT_TIMEOUT_SEC);
+  Serial.printf("Connecting to: %s type=%d (timeout %ds)\n",
+                keyboardAddress.c_str(), keyboardAddressType, CONNECT_TIMEOUT_SEC);
 
   // Reuse existing client or create new one
   if (!pClient) {
     pClient = NimBLEDevice::createClient();
-    pClient->setClientCallbacks(new ClientCallbacks());
+    pClient->setClientCallbacks(&clientCallbacks);
   }
   pClient->setConnectTimeout(CONNECT_TIMEOUT_SEC);
 
-  NimBLEAddress addr(keyboardAddress);
+  // Use the correct address type (public vs random)
+  NimBLEAddress addr(keyboardAddress, keyboardAddressType);
   if (!pClient->connect(addr, true)) {
     Serial.println("Failed to connect");
     bleState = BLEState::DISCONNECTED;
     return false;
   }
 
-  // The service discovery and characteristic setup is now handled in the onAuthenticationComplete callback
-  // This allows for asynchronous service discovery after authentication
+  // Service discovery is handled in onAuthenticationComplete callback
   return true;
 }
 
 // Global variable to store the passkey for display
 static uint32_t currentPasskey = 0;
 
-// BLE security callback
-class BleSecurityCallback : public NimBLESecurityCallbacks {
+// Static security callback
+static class BleSecurityCallback : public NimBLESecurityCallbacks {
   uint32_t onPassKeyRequest() override {
-    // Host displays passkey; user types it on the keyboard
-    uint32_t passkey = (uint32_t)(random(100000, 999999)); // Generate 6-digit passkey
+    uint32_t passkey = (uint32_t)(random(100000, 999999));
     currentPasskey = passkey;
     Serial.printf("Display passkey: %06lu (type on keyboard)\n", passkey);
     return passkey;
   }
 
   void onPassKeyNotify(uint32_t passkey) override {
-    // Some devices/stacks call this instead
     currentPasskey = passkey;
     Serial.printf("Passkey notify: %06lu\n", passkey);
   }
@@ -219,16 +217,14 @@ class BleSecurityCallback : public NimBLESecurityCallbacks {
                   desc->sec_state.encrypted,
                   desc->sec_state.bonded,
                   desc->sec_state.authenticated);
-                  
-    if (desc->sec_state.encrypted && desc->sec_state.bonded) {
-      // Authentication successful, now discover services and set up connection
+
+    // Accept connection if encrypted (bonded is desirable but not required for first connect)
+    if (desc->sec_state.encrypted) {
       Serial.println("Authentication successful, discovering services...");
-      
-      // Discover services after authentication
-      if (pClient->getServices(true)) { // true for doDiscover
+
+      if (pClient->getServices(true)) {
         Serial.println("Services discovered successfully");
-        
-        // Find HID service
+
         pRemoteService = pClient->getService(hidServiceUUID);
         if (!pRemoteService) {
           Serial.println("HID service not found");
@@ -237,16 +233,16 @@ class BleSecurityCallback : public NimBLESecurityCallbacks {
           return;
         }
 
-        // Find input report characteristic
+        // Find input report characteristic via Report Reference descriptor
         pInputReportChar = nullptr;
         std::vector<NimBLERemoteCharacteristic*>* chars = pRemoteService->getCharacteristics();
         for (auto& chr : *chars) {
           if (chr->getUUID() != reportUUID) continue;
 
           std::vector<NimBLERemoteDescriptor*>* descs = chr->getDescriptors();
-          for (auto& desc : *descs) {
-            if (desc->getUUID() == NimBLEUUID("2908")) {
-              std::string refData = desc->readValue();
+          for (auto& d : *descs) {
+            if (d->getUUID() == NimBLEUUID("2908")) {
+              std::string refData = d->readValue();
               if (refData.length() >= 2 && (uint8_t)refData[1] == 1) {
                 pInputReportChar = chr;
                 break;
@@ -278,7 +274,6 @@ class BleSecurityCallback : public NimBLESecurityCallbacks {
           return;
         }
 
-        // Subscribe to notifications
         if (!pInputReportChar->subscribe(true, onKeyboardNotify)) {
           Serial.println("Failed to subscribe to input reports");
           bleState = BLEState::DISCONNECTED;
@@ -286,7 +281,6 @@ class BleSecurityCallback : public NimBLESecurityCallbacks {
           return;
         }
 
-        // Set report protocol mode
         NimBLERemoteCharacteristic* pProto = pRemoteService->getCharacteristic(protocolModeUUID);
         if (pProto) {
           uint8_t mode = 1;
@@ -308,22 +302,21 @@ class BleSecurityCallback : public NimBLESecurityCallbacks {
 
         Serial.println("Keyboard ready - receiving input");
         bleState = BLEState::CONNECTED;
-        reconnectDelay = 2000; // Reset backoff on successful connection
+        reconnectDelay = 2000;
       } else {
         Serial.println("Failed to discover services after authentication");
         bleState = BLEState::DISCONNECTED;
         pClient->disconnect();
       }
     } else {
-      Serial.println("Authentication failed - device not stored");
+      Serial.println("Authentication failed - not encrypted");
       bleState = BLEState::DISCONNECTED;
       pClient->disconnect();
     }
-    
-    // Clear passkey after authentication attempt
+
     currentPasskey = 0;
   }
-};
+} securityCallback;
 
 // Function to get the current passkey for UI display
 uint32_t getCurrentPasskey() {
@@ -332,17 +325,19 @@ uint32_t getCurrentPasskey() {
 
 void bleSetup() {
   NimBLEDevice::init("MicroSlate");
-  NimBLEDevice::setSecurityAuth(true, true, true); // Enable bonding, MITM protection
-  NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY); // Set IO capabilities for keyboard display pairing
-  NimBLEDevice::setSecurityInitKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID); // Set key distribution
-  NimBLEDevice::setSecurityRespKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID); // Set key distribution
-  NimBLEDevice::setSecurityCallbacks(new BleSecurityCallback());
+  // bonding=true, MITM=true, SC=false (allow legacy pairing for keyboard compat)
+  NimBLEDevice::setSecurityAuth(true, true, false);
+  NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);
+  NimBLEDevice::setSecurityInitKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
+  NimBLEDevice::setSecurityRespKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
+  NimBLEDevice::setSecurityCallbacks(&securityCallback);
   NimBLEDevice::setPower(ESP_PWR_LVL_P9);
 
-  // Configure scan but DON'T start scanning on boot
-  // Only auto-reconnect to stored device, or user manually scans in BT Settings
+  // Open NVS for persistent device storage
+  prefs.begin("ble_kb", false);
+
   NimBLEScan* scan = NimBLEDevice::getScan();
-  scan->setAdvertisedDeviceCallbacks(new ScanCallbacks());
+  scan->setAdvertisedDeviceCallbacks(&scanCallbacks);
   scan->setInterval(1349);
   scan->setWindow(449);
   scan->setActiveScan(true);
@@ -350,10 +345,12 @@ void bleSetup() {
   // Check if we have a stored device to reconnect to
   std::string storedAddr, storedName;
   if (getStoredDevice(storedAddr, storedName) && !storedAddr.empty()) {
-    // Try to reconnect to stored device
     keyboardAddress = storedAddr;
+    // Restore address type from NVS
+    keyboardAddressType = prefs.getUChar("addrType", 0);
     connectToKeyboard = true;
-    Serial.printf("BLE init - will reconnect to stored device: %s\n", storedAddr.c_str());
+    Serial.printf("BLE init - will reconnect to stored device: %s (type=%d)\n",
+                  storedAddr.c_str(), keyboardAddressType);
   } else {
     bleState = BLEState::DISCONNECTED;
     Serial.println("BLE init - no stored device, use Bluetooth Settings to pair");
@@ -361,6 +358,18 @@ void bleSetup() {
 }
 
 void bleLoop() {
+  // Handle deferred secureConnection() call (moved out of onConnect callback)
+  if (needsSecureConnection && pClient && pClient->isConnected()) {
+    needsSecureConnection = false;
+    Serial.println("Requesting secure connection from main loop...");
+    if (!pClient->secureConnection()) {
+      Serial.println("secureConnection() failed");
+      bleState = BLEState::DISCONNECTED;
+      pClient->disconnect();
+      return;
+    }
+  }
+
   // Attempt connection if requested
   if (connectToKeyboard && bleState != BLEState::CONNECTED) {
     connectToKeyboard = false;
@@ -369,7 +378,6 @@ void bleLoop() {
   }
 
   // Auto-reconnect to STORED device only (with exponential backoff)
-  // Never auto-connect to random devices - user must pair manually first
   if (bleState == BLEState::DISCONNECTED && autoReconnectEnabled) {
     std::string storedAddr, storedName;
     if (getStoredDevice(storedAddr, storedName) && !storedAddr.empty()) {
@@ -377,15 +385,15 @@ void bleLoop() {
       if (now - lastReconnectAttempt >= reconnectDelay) {
         lastReconnectAttempt = now;
         keyboardAddress = storedAddr;
+        keyboardAddressType = prefs.getUChar("addrType", 0);
         connectToKeyboard = true;
-        Serial.printf("Auto-reconnecting to stored device: %s (next retry in %lums)\n",
-                      storedAddr.c_str(), reconnectDelay);
+        Serial.printf("Auto-reconnecting to stored device: %s type=%d (next retry in %lums)\n",
+                      storedAddr.c_str(), keyboardAddressType, reconnectDelay);
 
         reconnectDelay = (reconnectDelay * 2 > MAX_RECONNECT_DELAY)
                            ? MAX_RECONNECT_DELAY : reconnectDelay * 2;
       }
     }
-    // If no stored device: do nothing. User must go to BT Settings to pair.
   }
 }
 
@@ -398,19 +406,15 @@ BLEState getConnectionState() {
 }
 
 void startDeviceScan() {
-  // Stop any existing scan
   NimBLEDevice::getScan()->stop();
 
-  // Clear previous discoveries
   discoveredDevices.clear();
   NimBLEDevice::getScan()->clearResults();
 
-  // Set scan start time
   scanStartMs = millis();
 
   NimBLEScan* scan = NimBLEDevice::getScan();
-  // Set the callback again to ensure it's active for this scan
-  scan->setAdvertisedDeviceCallbacks(new ScanCallbacks());
+  scan->setAdvertisedDeviceCallbacks(&scanCallbacks);
   scan->setActiveScan(true);
 
   scan->start(15, false);  // 15 second non-blocking scan
@@ -443,21 +447,20 @@ void connectToDevice(int deviceIndex) {
     return;
   }
 
-  // Stop scanning first
   if (isScanning) {
     stopDeviceScan();
   }
 
-  // Disconnect current connection if any
   if (pClient && pClient->isConnected()) {
     pClient->disconnect();
   }
 
   keyboardAddress = discoveredDevices[deviceIndex].address;
+  keyboardAddressType = discoveredDevices[deviceIndex].addressType;
   connectToKeyboard = true;
 
-  Serial.printf("Connecting to: %s (%s)\n",
-                keyboardAddress.c_str(),
+  Serial.printf("Connecting to: %s type=%d (%s)\n",
+                keyboardAddress.c_str(), keyboardAddressType,
                 discoveredDevices[deviceIndex].name.c_str());
 }
 
@@ -478,20 +481,20 @@ std::string getCurrentDeviceAddress() {
   return keyboardAddress;
 }
 
-// Storage for paired device (in-memory, lost on reboot)
-static std::string storedDeviceAddress = "";
-static std::string storedDeviceName = "";
-
 void storePairedDevice(const std::string& address, const std::string& name) {
-  storedDeviceAddress = address;
-  storedDeviceName = name;
-  Serial.printf("Stored paired device: %s (%s)\n", address.c_str(), name.c_str());
+  prefs.putString("addr", address.c_str());
+  prefs.putString("name", name.c_str());
+  prefs.putUChar("addrType", keyboardAddressType);
+  Serial.printf("Stored paired device to NVS: %s (%s) type=%d\n",
+                address.c_str(), name.c_str(), keyboardAddressType);
 }
 
 bool getStoredDevice(std::string& address, std::string& name) {
-  if (!storedDeviceAddress.empty()) {
-    address = storedDeviceAddress;
-    name = storedDeviceName.empty() ? storedDeviceAddress : storedDeviceName;
+  String addr = prefs.getString("addr", "");
+  if (addr.length() > 0) {
+    address = addr.c_str();
+    String n = prefs.getString("name", "");
+    name = (n.length() > 0) ? n.c_str() : address;
     return true;
   }
   return false;
@@ -519,11 +522,11 @@ void clearAllBluetoothBonds() {
 }
 
 void clearStoredDevice() {
-  storedDeviceAddress = "";
-  storedDeviceName = "";
-  Serial.println("Cleared stored device");
-  
-  // Also clear all stored bonds
+  prefs.remove("addr");
+  prefs.remove("name");
+  prefs.remove("addrType");
+  Serial.println("Cleared stored device from NVS");
+
   NimBLEDevice::deleteAllBonds();
   Serial.println("Cleared all stored bonds");
 }
