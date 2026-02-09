@@ -168,7 +168,7 @@ static bool tryConnect() {
   // Reuse existing client or create new one
   if (!pClient) {
     pClient = NimBLEDevice::createClient();
-    pClient->setClientCallbacks(&clientCallbacks);
+    pClient->setClientCallbacks(&clientCallbacks, false);
   }
   pClient->setConnectTimeout(CONNECT_TIMEOUT_SEC);
 
@@ -337,7 +337,7 @@ void bleSetup() {
   prefs.begin("ble_kb", false);
 
   NimBLEScan* scan = NimBLEDevice::getScan();
-  scan->setAdvertisedDeviceCallbacks(&scanCallbacks);
+  scan->setAdvertisedDeviceCallbacks(&scanCallbacks, true);
   scan->setInterval(1349);
   scan->setWindow(449);
   scan->setActiveScan(true);
@@ -414,7 +414,7 @@ void startDeviceScan() {
   scanStartMs = millis();
 
   NimBLEScan* scan = NimBLEDevice::getScan();
-  scan->setAdvertisedDeviceCallbacks(&scanCallbacks);
+  scan->setAdvertisedDeviceCallbacks(&scanCallbacks, true);
   scan->setActiveScan(true);
 
   scan->start(15, false);  // 15 second non-blocking scan
