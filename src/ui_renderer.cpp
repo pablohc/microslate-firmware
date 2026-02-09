@@ -16,6 +16,8 @@ extern bool autoReconnectEnabled;
 // External functions
 bool getStoredDevice(std::string& address, std::string& name);
 uint32_t getCurrentPasskey();
+bool isDeviceScanning();
+uint32_t getScanAgeMs();
 
 // Font data includes
 #include <builtinFonts/notosans_14_regular.h>
@@ -392,7 +394,27 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
     char passkeyStr[16];
     snprintf(passkeyStr, sizeof(passkeyStr), "PIN: %06lu", passkey);
     renderer.drawText(FONT_UI, 10, 60, passkeyStr, true, EpdFontFamily::BOLD);
-    renderer.drawText(FONT_SMALL, 10, 75, "Enter this PIN on the keyboard", true);
+    renderer.drawText(FONT_SMALL, 10, 75, "Type this PIN on the keyboard", true);
+    renderer.drawText(FONT_SMALL, 10, 90, "Waiting for pairing...", true);
+  } else if (isDeviceScanning()) {
+    // Show scanning status with animated dots
+    static uint8_t dotPhase = 0;
+    static uint32_t lastAnimMs = 0;
+    
+    if (millis() - lastAnimMs > 900) {
+      dotPhase = (dotPhase + 1) % 4;
+      lastAnimMs = millis();
+    }
+    
+    std::string dots(dotPhase, '.');
+    char scanningStr[64];
+    int deviceCount = getDiscoveredDeviceCount();
+    snprintf(scanningStr, sizeof(scanningStr), "Searching for devices%s", dots.c_str());
+    renderer.drawText(FONT_SMALL, 10, 60, scanningStr);
+    
+    char foundStr[32];
+    snprintf(foundStr, sizeof(foundStr), "Found: %d", deviceCount);
+    renderer.drawText(FONT_SMALL, sw/2, 60, foundStr);
   }
 
   // Show discovered devices

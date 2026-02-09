@@ -35,6 +35,29 @@ static constexpr unsigned long MAX_RECONNECT_DELAY = 60000;
 // Device discovery variables
 static std::vector<BleDeviceInfo> discoveredDevices;
 static bool isScanning = false;
+static uint32_t scanStartMs = 0;  // NEW: for tracking scan age
+static constexpr uint32_t DEVICE_STALE_MS = 8000; // 8s stale timeout
+
+// NEW: helper function to upsert device
+static void upsertDevice(const BleDeviceInfo& info) {
+  for (auto &d : discoveredDevices) {
+    if (d.address == info.address) { 
+      d = info; 
+      return; 
+    }
+  }
+  discoveredDevices.push_back(info);
+}
+
+// NEW: function to prune stale devices
+static void pruneStaleDevices() {
+  uint32_t now = millis();
+  for (int i = (int)discoveredDevices.size() - 1; i >= 0; --i) {
+    if (now - discoveredDevices[i].lastSeenMs > DEVICE_STALE_MS) {
+      discoveredDevices.erase(discoveredDevices.begin() + i);
+    }
+  }
+}
 
 // Connection timeout in seconds
 static constexpr uint8_t CONNECT_TIMEOUT_SEC = 5;
@@ -92,27 +115,15 @@ static void onKeyboardNotify(NimBLERemoteCharacteristic* pRemChar,
 // Auto-connect only happens for stored devices via bleLoop()
 class ScanCallbacks : public NimBLEAdvertisedDeviceCallbacks {
   void onResult(NimBLEAdvertisedDevice* dev) override {
-    // Nothing to do here - device list is built from getResults() which has merged data
-    // This callback exists because NimBLE requires one for scanning
+    // Update device list in real time
+    BleDeviceInfo info;
+    info.address = dev->getAddress().toString();
+    info.name = dev->haveName() ? dev->getName() : info.address;
+    info.rssi = dev->getRSSI();
+    info.lastSeenMs = millis(); // Record when seen
+    upsertDevice(info);
   }
 };
-
-// Rebuild discoveredDevices list from NimBLE's internal scan results
-// NimBLE merges advertisement + scan response data, so names are available here
-static void refreshDeviceListFromScanResults() {
-  NimBLEScanResults results = NimBLEDevice::getScan()->getResults();
-  int count = results.getCount();
-
-  discoveredDevices.clear();
-  for (int i = 0; i < count; i++) {
-    NimBLEAdvertisedDevice dev = results.getDevice(i);
-    BleDeviceInfo info;
-    info.address = dev.getAddress().toString();
-    info.name = dev.haveName() ? dev.getName() : info.address;
-    info.rssi = dev.getRSSI();
-    discoveredDevices.push_back(info);
-  }
-}
 
 // BLE client callback
 class ClientCallbacks : public NimBLEClientCallbacks {
@@ -393,7 +404,11 @@ void startDeviceScan() {
   discoveredDevices.clear();
   NimBLEDevice::getScan()->clearResults();
 
+  // Set scan start time
+  scanStartMs = millis();
+
   NimBLEScan* scan = NimBLEDevice::getScan();
+  scan->setAdvertisedDeviceCallbacks(new ScanCallbacks());  // NEW: set callback
   scan->setActiveScan(true);
 
   scan->start(15, false);  // 15 second non-blocking scan
@@ -403,21 +418,12 @@ void startDeviceScan() {
 
 void stopDeviceScan() {
   NimBLEDevice::getScan()->stop();
-  refreshDeviceListFromScanResults();
   isScanning = false;
 }
 
 int getDiscoveredDeviceCount() {
-  if (isScanning) {
-    if (NimBLEDevice::getScan()->isScanning()) {
-      // Scan still running - refresh with latest merged results
-      refreshDeviceListFromScanResults();
-    } else {
-      // Scan just finished naturally - get final results and mark done
-      refreshDeviceListFromScanResults();
-      isScanning = false;
-    }
-  }
+  // Prune stale devices before returning count
+  pruneStaleDevices();
   return discoveredDevices.size();
 }
 
@@ -446,9 +452,6 @@ void connectToDevice(int deviceIndex) {
 
   keyboardAddress = discoveredDevices[deviceIndex].address;
   connectToKeyboard = true;
-
-  // Store this device as the paired device
-  storePairedDevice(discoveredDevices[deviceIndex].address, discoveredDevices[deviceIndex].name);
 
   Serial.printf("Connecting to: %s (%s)\n",
                 keyboardAddress.c_str(),
@@ -489,6 +492,27 @@ bool getStoredDevice(std::string& address, std::string& name) {
     return true;
   }
   return false;
+}
+
+bool isDeviceScanning() {
+  return isScanning;
+}
+
+uint32_t getScanAgeMs() {
+  return isScanning ? (millis() - scanStartMs) : 0;
+}
+
+void refreshScanNow() {
+  NimBLEDevice::getScan()->stop();
+  NimBLEDevice::getScan()->clearResults();
+  discoveredDevices.clear();
+  startDeviceScan();
+}
+
+void clearAllBluetoothBonds() {
+  NimBLEDevice::deleteAllBonds();
+  clearStoredDevice();
+  Serial.println("[BLE] Deleted all bonds + cleared stored device");
 }
 
 void clearStoredDevice() {

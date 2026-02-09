@@ -8,6 +8,7 @@ struct BleDeviceInfo {
   std::string address;
   std::string name;
   int rssi;
+  uint32_t lastSeenMs;   // NEW: from millis()
 };
 
 void bleSetup();
@@ -34,3 +35,9 @@ void clearStoredDevice();
 
 // Function for getting current passkey for UI display
 uint32_t getCurrentPasskey();
+
+// Bluetooth scanning status functions
+bool isDeviceScanning();       // NEW
+uint32_t getScanAgeMs();       // NEW
+void refreshScanNow();         // NEW: stop/clear/restart scan
+void clearAllBluetoothBonds(); // NEW: delete all stored bonds

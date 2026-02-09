@@ -14,6 +14,9 @@ void storePairedDevice(const std::string& address, const std::string& name);
 bool getStoredDevice(std::string& address, std::string& name);
 void clearStoredDevice();
 uint32_t getCurrentPasskey();
+bool isDeviceScanning();
+void refreshScanNow();
+void clearAllBluetoothBonds();
 
 // --- Input Queue ---
 static KeyEvent inputQueue[INPUT_QUEUE_SIZE];
@@ -311,7 +314,7 @@ static void dispatchEvent(const KeyEvent& event) {
           currentState = UIState::BLUETOOTH_SETTINGS;
           screenDirty = true;
         } else if (settingsSelection == 4) {  // Clear paired device option
-          clearStoredDevice();
+          clearAllBluetoothBonds();
           screenDirty = true;
         } else if (settingsSelection == 2) {  // Back to main menu
           currentState = UIState::MAIN_MENU;
@@ -348,12 +351,17 @@ static void dispatchEvent(const KeyEvent& event) {
           screenDirty = true;
         }
       } else if (event.keyCode == HID_KEY_ENTER) {
-        if (deviceCount > 0) {
-          // Connect to the selected device
-          connectToDevice(bluetoothDeviceSelection);
+        if (isDeviceScanning()) {
+          // If scanning, refresh the scan
+          refreshScanNow();
         } else {
-          // If no devices found, start scanning
-          startDeviceScan();
+          if (deviceCount > 0) {
+            // Connect to the selected device
+            connectToDevice(bluetoothDeviceSelection);
+          } else {
+            // If no devices found, start scanning
+            startDeviceScan();
+          }
         }
         screenDirty = true;
       } else if (event.keyCode == HID_KEY_LEFT) {
