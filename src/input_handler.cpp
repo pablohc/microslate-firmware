@@ -354,22 +354,22 @@ static void dispatchEvent(const KeyEvent& event) {
           screenDirty = true;
         }
       } else if (event.keyCode == HID_KEY_ENTER) {
-        Serial.printf("[INPUT] BT: Enter pressed - deviceCount=%d, scanning=%d\n", deviceCount, isDeviceScanning());
-        if (deviceCount > 0) {
-          // Connect to the selected device (stops scanning automatically)
-          Serial.printf("[INPUT] BT: Connecting to device %d\n", bluetoothDeviceSelection);
+        if (deviceCount > 0 && !isDeviceScanning()) {
+          // Connect to the selected device
           connectToDevice(bluetoothDeviceSelection);
         } else if (!isDeviceScanning()) {
-          // No devices and not scanning — start scan
-          Serial.println("[INPUT] BT: Starting scan");
+          // No devices — start a new scan
           startDeviceScan();
         }
-        // If scanning with no devices yet, Enter does nothing (just wait)
+        screenDirty = true;
+      } else if (event.keyCode == HID_KEY_RIGHT) {
+        // Right button = re-scan for devices
+        if (!isDeviceScanning()) {
+          startDeviceScan();
+        }
         screenDirty = true;
       } else if (event.keyCode == HID_KEY_LEFT) {
-        // Option to disconnect current device
         if (isKeyboardConnected()) {
-          Serial.println("[INPUT] BT: Left pressed - disconnecting device");
           disconnectCurrentDevice();
           screenDirty = true;
         }

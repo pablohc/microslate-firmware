@@ -144,34 +144,6 @@ void enterDeepSleep(SleepReason reason) {
   // Will not return - device is asleep
 }
 
-// Read ADC with multi-sample averaging to combat BLE scanning noise.
-// BLE radio activity causes ADC jitter that crosses InputManager thresholds,
-// preventing its 5ms debounce from ever completing.
-static int readADCAvg(int pin, int samples = 8) {
-  int sum = 0;
-  for (int i = 0; i < samples; i++) {
-    sum += analogRead(pin);
-  }
-  return sum / samples;
-}
-
-// Map averaged ADC1 (pin 1) → button index.  Thresholds match InputManager
-// but with a "no button" zone above 3800 to reject noise near 4095.
-static int adcToButton1(int adc) {
-  if (adc > 3800) return -1;  // No button
-  if (adc > 2600) return 0;   // Back     (InputManager: >3100)
-  if (adc > 1400) return 1;   // Confirm  (InputManager: >2090)
-  if (adc > 400)  return 2;   // Left     (InputManager: >750)
-  return 3;                    // Right
-}
-
-// Map averaged ADC2 (pin 2) → button index.
-static int adcToButton2(int adc) {
-  if (adc > 3800) return -1;  // No button
-  if (adc > 600)  return 0;   // Up       (InputManager: >1120)
-  return 1;                    // Down
-}
-
 // Translate physical button presses to HID key codes
 // NOTE: gpio.update() is called in loop() before this function
 static void processPhysicalButtons() {
@@ -182,47 +154,22 @@ static void processPhysicalButtons() {
   static bool btnConfirmLast = false;
   static bool btnBackLast = false;
 
-  bool btnBack, btnConfirm, btnLeft, btnRight, btnUp, btnDown;
-
-  if (currentState == UIState::BLUETOOTH_SETTINGS) {
-    // BLE scanning causes ADC noise that prevents InputManager's 5ms debounce
-    // from completing.  Read ADC directly with averaging to bypass it.
-    int adc1 = readADCAvg(1, 8);
-    int adc2 = readADCAvg(2, 8);
-    int btn1 = adcToButton1(adc1);
-    int btn2 = adcToButton2(adc2);
-
-    btnBack    = (btn1 == 0);
-    btnConfirm = (btn1 == 1);
-    btnLeft    = (btn1 == 2);
-    btnRight   = (btn1 == 3);
-    btnUp      = (btn2 == 0);
-    btnDown    = (btn2 == 1);
-
-    // Diagnostic logging every 2 seconds
-    static unsigned long lastRawDebug = 0;
-    if (millis() - lastRawDebug > 2000) {
-      lastRawDebug = millis();
-      Serial.printf("[ADC-BTN] ADC1=%d(%d) ADC2=%d(%d) | Back=%d Confirm=%d Up=%d Down=%d\n",
-                    adc1, btn1, adc2, btn2, btnBack, btnConfirm, btnUp, btnDown);
-    }
-  } else {
-    // Normal screens: use InputManager's debounced state (no BLE noise issue)
-    btnUp      = gpio.isPressed(HalGPIO::BTN_UP);
-    btnDown    = gpio.isPressed(HalGPIO::BTN_DOWN);
-    btnLeft    = gpio.isPressed(HalGPIO::BTN_LEFT);
-    btnRight   = gpio.isPressed(HalGPIO::BTN_RIGHT);
-    btnConfirm = gpio.isPressed(HalGPIO::BTN_CONFIRM);
-    btnBack    = gpio.isPressed(HalGPIO::BTN_BACK);
-  }
+  // Use isPressed() — persistent debounced state.  With one-shot scanning
+  // (radio quiet during navigation), InputManager debounce works reliably.
+  bool btnUp      = gpio.isPressed(HalGPIO::BTN_UP);
+  bool btnDown    = gpio.isPressed(HalGPIO::BTN_DOWN);
+  bool btnLeft    = gpio.isPressed(HalGPIO::BTN_LEFT);
+  bool btnRight   = gpio.isPressed(HalGPIO::BTN_RIGHT);
+  bool btnConfirm = gpio.isPressed(HalGPIO::BTN_CONFIRM);
+  bool btnBack    = gpio.isPressed(HalGPIO::BTN_BACK);
 
   // Power button state machine for proper long/short press handling
   static bool powerHeld = false;
   static unsigned long powerPressStart = 0;
   static bool sleepTriggered = false;
-  
+
   bool btnPower = gpio.isPressed(HalGPIO::BTN_POWER);
-  
+
   if (btnPower && !powerHeld) {
     // Button just pressed
     powerHeld = true;
@@ -255,12 +202,28 @@ static void processPhysicalButtons() {
     }
   }
 
-  // Debug: log button state periodically
-  static unsigned long lastButtonDebug = 0;
-  if (millis() - lastButtonDebug > 2000 && currentState == UIState::BLUETOOTH_SETTINGS) {
-    lastButtonDebug = millis();
-    Serial.printf("[BTN-DEBUG] State=%d, Up=%d Down=%d Confirm=%d Back=%d\n",
-                  (int)currentState, btnUp, btnDown, btnConfirm, btnBack);
+  // Back button long-press for restart
+  static bool backHeld = false;
+  static unsigned long backPressStart = 0;
+  static bool restartTriggered = false;
+
+  if (btnBack && !backHeld) {
+    backHeld = true;
+    restartTriggered = false;
+    backPressStart = millis();
+  }
+
+  if (btnBack && backHeld && !restartTriggered) {
+    if (millis() - backPressStart > 5000) {
+      restartTriggered = true;
+      Serial.println("BACK held for 5s — restarting device...");
+      delay(100);
+      ESP.restart();
+    }
+  }
+
+  if (!btnBack && backHeld) {
+    backHeld = false;
   }
 
   // Map physical buttons to HID key codes based on current UI state
@@ -340,22 +303,18 @@ static void processPhysicalButtons() {
 
     case UIState::BLUETOOTH_SETTINGS:
       if (btnUp && !btnUpLast) {
-        Serial.println("[BTN] Physical UP pressed - enqueuing HID_KEY_UP");
         enqueueKeyEvent(HID_KEY_UP, 0, true);
         enqueueKeyEvent(HID_KEY_UP, 0, false);
       }
       if (btnDown && !btnDownLast) {
-        Serial.println("[BTN] Physical DOWN pressed - enqueuing HID_KEY_DOWN");
         enqueueKeyEvent(HID_KEY_DOWN, 0, true);
         enqueueKeyEvent(HID_KEY_DOWN, 0, false);
       }
       if (btnConfirm && !btnConfirmLast) {
-        Serial.println("[BTN] Physical CONFIRM pressed - enqueuing HID_KEY_ENTER");
         enqueueKeyEvent(HID_KEY_ENTER, 0, true);
         enqueueKeyEvent(HID_KEY_ENTER, 0, false);
       }
       if (btnBack && !btnBackLast) {
-        Serial.println("[BTN] Physical BACK pressed - enqueuing HID_KEY_ESCAPE");
         enqueueKeyEvent(HID_KEY_ESCAPE, 0, true);
         enqueueKeyEvent(HID_KEY_ESCAPE, 0, false);
       }
@@ -452,36 +411,21 @@ void loop() {
   static UIState lastState = UIState::MAIN_MENU;
   if (currentState == UIState::BLUETOOTH_SETTINGS) {
     autoReconnectEnabled = false;
-    // On first entry to BT settings, cancel pending connections and auto-start scan
+    // On first entry to BT settings, do a one-shot scan
     if (lastState != UIState::BLUETOOTH_SETTINGS) {
       cancelPendingConnection();
-      if (!isDeviceScanning()) {
-        startDeviceScan();
-      }
+      startDeviceScan();  // One-shot 5s scan, radio goes quiet after
     }
   } else {
     autoReconnectEnabled = true;
-    // Stop scanning when leaving BT settings
     if (lastState == UIState::BLUETOOTH_SETTINGS && isDeviceScanning()) {
       stopDeviceScan();
     }
   }
   lastState = currentState;
 
-  // Process BLE for connection handling in all states
+  // Process BLE (connection handling, scan completion detection)
   bleLoop();
-
-  // Periodically refresh BT screen during scanning (every 3s) instead of on
-  // every device-count change.  Frequent 430ms display refreshes starve the
-  // button debounce state machine, making physical buttons unresponsive.
-  if (currentState == UIState::BLUETOOTH_SETTINGS) {
-    static unsigned long lastBtRefresh = 0;
-    unsigned long now2 = millis();
-    if (now2 - lastBtRefresh > 3000) {
-      lastBtRefresh = now2;
-      screenDirty = true;
-    }
-  }
 
   // CRITICAL: Process buttons BEFORE checking wasAnyPressed() to avoid consuming button states
   processPhysicalButtons();

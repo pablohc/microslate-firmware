@@ -154,10 +154,8 @@ static class ClientCallbacks : public NimBLEClientCallbacks {
 
 static class BleSecurityCallback : public NimBLESecurityCallbacks {
   uint32_t onPassKeyRequest() override {
-    // For DISPLAY_ONLY, we should typically *display* the passkey we are notified of,
-    // not generate one here. If this gets called, log it for debugging.
-    Serial.println("[BLE] PassKeyRequest received (unexpected for DISPLAY_ONLY)");
-    return 0;
+    Serial.println("[BLE] PassKeyRequest received - returning 123456");
+    return 123456;
   }
 
   void onPassKeyNotify(uint32_t passkey) override {
@@ -169,15 +167,17 @@ static class BleSecurityCallback : public NimBLESecurityCallbacks {
   }
 
   bool onConfirmPIN(uint32_t passkey) override {
-    Serial.printf("[BLE] Confirm PIN: %06lu\n", passkey);
+    Serial.printf("[BLE] Confirm PIN: %06lu - auto-accepting\n", passkey);
     currentPasskey = passkey;
     // Force immediate screen update to show passkey
     extern bool screenDirty;
     screenDirty = true;
+    // Auto-accept like micro-journal does
     return true;
   }
 
   bool onSecurityRequest() override {
+    Serial.println("[BLE] Security request - accepting");
     return true;
   }
 
@@ -298,27 +298,29 @@ static void bleConnectTask(void* param) {
     return;
   }
 
-  Serial.println("[BLE-Task] Connected, starting security...");
+  Serial.println("[BLE-Task] Connected, attempting security...");
 
-  // Step 2: Security (blocks this task while passkey exchange happens)
-  // Main loop stays responsive and can display the passkey on screen
-  if (!pClient->secureConnection()) {
-    Serial.println("[BLE-Task] secureConnection() failed");
-    // Give a moment for onAuthenticationComplete to fire
-    vTaskDelay(pdMS_TO_TICKS(500));
+  // Step 2: Try security pairing (optional for some keyboards)
+  // If this fails, we'll still try HID setup in case the keyboard doesn't require auth
+  bool secureAttempted = pClient->secureConnection();
+
+  if (secureAttempted) {
+    // Wait for auth callbacks
+    unsigned long secStart = millis();
+    while (!authSuccess && (millis() - secStart < 5000)) {
+      vTaskDelay(pdMS_TO_TICKS(100));
+    }
+
+    if (authSuccess) {
+      Serial.println("[BLE-Task] Security succeeded");
+    } else {
+      Serial.println("[BLE-Task] Security failed/timeout - trying HID anyway");
+    }
+  } else {
+    Serial.println("[BLE-Task] secureConnection() returned false - trying HID anyway");
   }
 
-  // Step 3: Check auth result
-  if (!authSuccess) {
-    Serial.println("[BLE-Task] Auth not successful, disconnecting");
-    if (pClient->isConnected()) pClient->disconnect();
-    bleState = BLEState::DISCONNECTED;
-    connectTaskHandle = nullptr;
-    vTaskDelete(NULL);
-    return;
-  }
-
-  Serial.println("[BLE-Task] Auth OK, setting up HID...");
+  Serial.println("[BLE-Task] Setting up HID...");
 
   // Step 4: Service discovery + HID subscription (blocks this task)
   if (!setupHidConnection()) {
@@ -368,9 +370,10 @@ uint32_t getCurrentPasskey() {
 
 void bleSetup() {
   NimBLEDevice::init("MicroSlate");
-  // bonding=true, MITM=true, SC=true (modern keyboards prefer Secure Connections)
-  NimBLEDevice::setSecurityAuth(true, true, true);
-  NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);
+  // bonding=true, MITM=FALSE, SC=FALSE - "Just Works" pairing
+  NimBLEDevice::setSecurityAuth(true, false, false);
+  // NO_INPUT_OUTPUT forces "Just Works" pairing (no passkey)
+  NimBLEDevice::setSecurityIOCap(BLE_HS_IO_NO_INPUT_OUTPUT);
   NimBLEDevice::setSecurityInitKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
   NimBLEDevice::setSecurityRespKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
   NimBLEDevice::setSecurityCallbacks(&securityCallback);
@@ -398,25 +401,14 @@ void bleSetup() {
 }
 
 void bleLoop() {
-  // Auto-restart scan if expired and continuous mode active
-  if (isScanning && continuousScanning && !NimBLEDevice::getScan()->isScanning()) {
-    NimBLEDevice::getScan()->clearResults();
-    NimBLEDevice::getScan()->start(5, false);  // Reduced from 15s to 5s
-    scanStartMs = millis();
-    Serial.println("[BLE] Restarting scan cycle");
-  }
-
-  // Check for scan timeout to prevent infinite scanning
-  if (isScanning && (millis() - scanStartMs > 25000)) { // 25 seconds max (5s longer than stale timeout)
-    Serial.println("[BLE] Scan timeout - stopping scan after 25s");
-    NimBLEDevice::getScan()->stop();
+  // Detect when a one-shot scan finishes
+  if (isScanning && !NimBLEDevice::getScan()->isScanning()) {
     isScanning = false;
     continuousScanning = false;
-  }
-
-  // Sync isScanning with actual NimBLE state
-  if (isScanning && !continuousScanning && !NimBLEDevice::getScan()->isScanning()) {
-    isScanning = false;
+    Serial.printf("[BLE] Scan complete — found %d devices\n", (int)discoveredDevices.size());
+    // Trigger screen refresh to show final results
+    extern bool screenDirty;
+    screenDirty = true;
   }
 
   // Launch connect task if requested (non-blocking)
@@ -476,11 +468,11 @@ void startDeviceScan() {
   NimBLEScan* scan = NimBLEDevice::getScan();
   scan->setAdvertisedDeviceCallbacks(&scanCallbacks, true);
   scan->setActiveScan(true);
-  scan->start(5, false);  // Reduced from 15s to 5s for more responsive UI
+  scan->start(5, false);  // One-shot 5-second scan
 
   isScanning = true;
-  continuousScanning = true;
-  Serial.println("[BLE] Started continuous scan (5s cycles)");
+  continuousScanning = false;  // One-shot: no auto-restart
+  Serial.println("[BLE] Started one-shot scan (5s)");
 }
 
 void stopDeviceScan() {
@@ -490,7 +482,6 @@ void stopDeviceScan() {
 }
 
 int getDiscoveredDeviceCount() {
-  pruneStaleDevices();
   return discoveredDevices.size();
 }
 
