@@ -85,11 +85,43 @@ void setup() {
   autoReconnectEnabled = true;
 
   Serial.println("MicroSlate ready.");
+  
+  // Show a quick wake-up screen to indicate the device is starting up
+  renderer.clearScreen();
+  
+  int sw = renderer.getScreenWidth();
+  int sh = renderer.getScreenHeight();
+  
+  // Title: "MicroSlate"
+  const char* title = "MicroSlate";
+  int titleWidth = renderer.getTextAdvanceX(FONT_BODY, title);
+  int titleX = (sw - titleWidth) / 2;
+  int titleY = sh * 0.45; // 45% down the screen
+  renderer.drawText(FONT_BODY, titleX, titleY, title, true, EpdFontFamily::BOLD);
+  
+  // Subtitle: "Starting..."
+  const char* subtitle = "Starting...";
+  int subTitleWidth = renderer.getTextAdvanceX(FONT_UI, subtitle);
+  int subTitleX = (sw - subTitleWidth) / 2;
+  int subTitleY = sh * 0.58; // 58% down the screen
+  renderer.drawText(FONT_UI, subTitleX, subTitleY, subtitle, true);
+  
+  // Perform a full display refresh
+  renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+  
+  // Small delay to show the startup screen briefly
+  delay(500);
+  
+  // Clear the screen and proceed with normal UI
+  screenDirty = true; // Force a redraw of the main UI
 }
 
 // Enter deep sleep - matches crosspoint pattern
-static void enterDeepSleep() {
+void enterDeepSleep(SleepReason reason) {
   Serial.println("Entering deep sleep...");
+  
+  // Render the sleep screen before entering deep sleep
+  renderSleepScreen();
 
   // Save any unsaved work
   if (currentState == UIState::TEXT_EDITOR && editorHasUnsavedChanges()) {
@@ -136,14 +168,7 @@ static void processPhysicalButtons() {
   if (btnPower && powerHeld && !sleepTriggered) {
     if (millis() - powerPressStart > 5000) {
       sleepTriggered = true;
-      Serial.println("Entering sleep mode");
-      // Save any unsaved work before sleeping
-      if (currentState == UIState::TEXT_EDITOR && editorHasUnsavedChanges()) {
-        saveCurrentFile();
-      }
-      // Prepare for sleep
-      display.deepSleep();
-      gpio.startDeepSleep();
+      enterDeepSleep(SleepReason::POWER_LONGPRESS);
       return; // Exit early to prevent further processing
     }
   }
@@ -307,6 +332,48 @@ void registerActivity() {
   lastActivityTime = millis();
 }
 
+// Enum for sleep reasons
+enum class SleepReason {
+  POWER_LONGPRESS,
+  IDLE_TIMEOUT,
+  MENU_ACTION
+};
+
+// Function to render the sleep screen
+void renderSleepScreen() {
+  renderer.clearScreen();
+  
+  int sw = renderer.getScreenWidth();
+  int sh = renderer.getScreenHeight();
+  
+  // Title: "MicroSlate"
+  const char* title = "MicroSlate";
+  int titleWidth = renderer.getTextAdvanceX(FONT_BODY, title);
+  int titleX = (sw - titleWidth) / 2;
+  int titleY = sh * 0.45; // 45% down the screen
+  renderer.drawText(FONT_BODY, titleX, titleY, title, true, EpdFontFamily::BOLD);
+  
+  // Subtitle: "Asleep"
+  const char* subtitle = "Asleep";
+  int subTitleWidth = renderer.getTextAdvanceX(FONT_UI, subtitle);
+  int subTitleX = (sw - subTitleWidth) / 2;
+  int subTitleY = sh * 0.58; // 58% down the screen
+  renderer.drawText(FONT_UI, subTitleX, subTitleY, subtitle, true);
+  
+  // Footer: "Hold Power to wake"
+  const char* footer = "Hold Power to wake";
+  int footerWidth = renderer.getTextAdvanceX(FONT_SMALL, footer);
+  int footerX = (sw - footerWidth) / 2;
+  int footerY = sh - 12; // 12 pixels from bottom
+  renderer.drawText(FONT_SMALL, footerX, footerY, footer);
+  
+  // Perform a full display refresh to ensure the sleep screen is visible
+  renderer.displayBuffer(HalDisplay::FULL_REFRESH);
+  
+  // Small delay to ensure the display update is complete
+  delay(500);
+}
+
 void loop() {
   // --- GPIO first: always poll buttons before anything else ---
   gpio.update();
@@ -347,14 +414,7 @@ void loop() {
   
   // Check for idle timeout
   if (millis() - lastActivityTime > IDLE_TIMEOUT) {
-    Serial.println("Entering sleep mode due to inactivity");
-    // Save any unsaved work before sleeping
-    if (currentState == UIState::TEXT_EDITOR && editorHasUnsavedChanges()) {
-      saveCurrentFile();
-    }
-    // Prepare for sleep
-    display.deepSleep();
-    gpio.startDeepSleep();
+    enterDeepSleep(SleepReason::IDLE_TIMEOUT);
   }
   
   delay(10);
