@@ -43,6 +43,10 @@ bool screenDirty = true;
 char renameBuffer[MAX_FILENAME_LEN] = "";
 int renameBufferLen = 0;
 
+// UI mode flags
+bool darkMode = false;
+bool cleanMode = false;
+
 // --- Screen update ---
 static void updateScreen() {
   if (!screenDirty) return;
@@ -62,7 +66,13 @@ static void updateScreen() {
     lastOrientation = currentOrientation;
   }
 
-  // Update editor's chars per line
+  // Auto-compute chars per line from font metrics so text always fills the screen
+  {
+    int sw = renderer.getScreenWidth();
+    int textAreaWidth = sw - 20;  // 10px margins each side
+    int avgCharW = renderer.getTextAdvanceX(FONT_BODY, "abcdefghijklmnopqrstuvwxyz") / 26;
+    if (avgCharW > 0) charsPerLine = textAreaWidth / avgCharW;
+  }
   editorSetCharsPerLine(charsPerLine);
 
   switch (currentState) {
@@ -262,23 +272,40 @@ static void processPhysicalButtons() {
       }
       break;
 
-    case UIState::TEXT_EDITOR:
-      if (btnUp && !btnUpLast) {
-        enqueueKeyEvent(HID_KEY_UP, 0, true);
-        enqueueKeyEvent(HID_KEY_UP, 0, false);
+    case UIState::TEXT_EDITOR: {
+      // Key repeat state for held navigation/backspace keys
+      static uint8_t repeatKey = 0;
+      static unsigned long repeatStart = 0;
+      static unsigned long lastRepeat = 0;
+      const unsigned long REPEAT_DELAY = 400;
+      const unsigned long REPEAT_RATE  = 80;
+
+      auto fireKey = [](uint8_t k) {
+        enqueueKeyEvent(k, 0, true);
+        enqueueKeyEvent(k, 0, false);
+      };
+
+      // Map currently held button to HID key (0 = none)
+      uint8_t heldKey = 0;
+      if      (btnUp)    heldKey = HID_KEY_UP;
+      else if (btnDown)  heldKey = HID_KEY_DOWN;
+      else if (btnLeft)  heldKey = HID_KEY_LEFT;
+      else if (btnRight) heldKey = HID_KEY_RIGHT;
+
+      if (heldKey != repeatKey) {
+        // Key changed — fire immediately on press
+        if (heldKey != 0) fireKey(heldKey);
+        repeatKey   = heldKey;
+        repeatStart = millis();
+        lastRepeat  = millis();
+      } else if (heldKey != 0) {
+        unsigned long now = millis();
+        if (now - repeatStart > REPEAT_DELAY && now - lastRepeat > REPEAT_RATE) {
+          fireKey(heldKey);
+          lastRepeat = now;
+        }
       }
-      if (btnDown && !btnDownLast) {
-        enqueueKeyEvent(HID_KEY_DOWN, 0, true);
-        enqueueKeyEvent(HID_KEY_DOWN, 0, false);
-      }
-      if (btnLeft && !btnLeftLast) {
-        enqueueKeyEvent(HID_KEY_LEFT, 0, true);
-        enqueueKeyEvent(HID_KEY_LEFT, 0, false);
-      }
-      if (btnRight && !btnRightLast) {
-        enqueueKeyEvent(HID_KEY_RIGHT, 0, true);
-        enqueueKeyEvent(HID_KEY_RIGHT, 0, false);
-      }
+
       if (btnConfirm && !btnConfirmLast) {
         enqueueKeyEvent(HID_KEY_ENTER, 0, true);
         enqueueKeyEvent(HID_KEY_ENTER, 0, false);
@@ -288,6 +315,7 @@ static void processPhysicalButtons() {
         screenDirty = true;
       }
       break;
+    }
 
     case UIState::RENAME_FILE:
     case UIState::NEW_FILE:

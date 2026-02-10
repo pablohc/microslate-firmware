@@ -8,6 +8,8 @@
 
 // External variables
 extern bool autoReconnectEnabled;
+extern bool darkMode;
+extern bool cleanMode;
 
 // External functions
 void storePairedDevice(const std::string& address, const std::string& name);
@@ -123,17 +125,24 @@ static void handleEditorKey(uint8_t keyCode, uint8_t modifiers) {
       screenDirty = true;
       return;
     }
-    if (keyCode == HID_KEY_Q) {
-      if (editorHasUnsavedChanges()) saveCurrentFile();
-      currentState = UIState::FILE_BROWSER;
-      screenDirty = true;
-      return;
-    }
     if (keyCode == HID_KEY_N) {
       createNewFile();
       screenDirty = true;
       return;
     }
+    if (keyCode == HID_KEY_Z) {
+      cleanMode = !cleanMode;
+      screenDirty = true;
+      return;
+    }
+    return;
+  }
+
+  // ESC = save and return to file browser
+  if (keyCode == HID_KEY_ESCAPE) {
+    if (editorHasUnsavedChanges()) saveCurrentFile();
+    currentState = UIState::FILE_BROWSER;
+    screenDirty = true;
     return;
   }
 
@@ -285,19 +294,29 @@ static void dispatchEvent(const KeyEvent& event) {
       break;
 
     case UIState::SETTINGS: {
+      const int SETTINGS_COUNT = 5;  // Orientation, Dark Mode, Back, Bluetooth, Clear Paired
       if (event.keyCode == HID_KEY_DOWN) {
-        settingsSelection = (settingsSelection + 1) % 5;  // Increased to 5 options
+        settingsSelection = (settingsSelection + 1) % SETTINGS_COUNT;
         screenDirty = true;
       } else if (event.keyCode == HID_KEY_UP) {
-        settingsSelection = (settingsSelection - 1 + 5) % 5;  // Increased to 5 options
+        settingsSelection = (settingsSelection - 1 + SETTINGS_COUNT) % SETTINGS_COUNT;
         screenDirty = true;
-      } else if (event.keyCode == HID_KEY_RIGHT) {
+      } else if (event.keyCode == HID_KEY_RIGHT || event.keyCode == HID_KEY_ENTER) {
         if (settingsSelection == 0) {
           int v = static_cast<int>(currentOrientation);
           currentOrientation = static_cast<Orientation>((v + 1) % 4);
           screenDirty = true;
-        } else if (settingsSelection == 1 && charsPerLine < 60) {
-          charsPerLine += 5;
+        } else if (settingsSelection == 1) {  // Dark mode toggle
+          darkMode = !darkMode;
+          screenDirty = true;
+        } else if (settingsSelection == 2) {  // Back to main menu
+          currentState = UIState::MAIN_MENU;
+          screenDirty = true;
+        } else if (settingsSelection == 3) {  // Bluetooth settings
+          currentState = UIState::BLUETOOTH_SETTINGS;
+          screenDirty = true;
+        } else if (settingsSelection == 4) {  // Clear paired device
+          clearAllBluetoothBonds();
           screenDirty = true;
         }
       } else if (event.keyCode == HID_KEY_LEFT) {
@@ -305,19 +324,8 @@ static void dispatchEvent(const KeyEvent& event) {
           int v = static_cast<int>(currentOrientation);
           currentOrientation = static_cast<Orientation>((v - 1 + 4) % 4);
           screenDirty = true;
-        } else if (settingsSelection == 1 && charsPerLine > 20) {
-          charsPerLine -= 5;
-          screenDirty = true;
-        }
-      } else if (event.keyCode == HID_KEY_ENTER) {
-        if (settingsSelection == 3) {  // Bluetooth settings option
-          currentState = UIState::BLUETOOTH_SETTINGS;
-          screenDirty = true;
-        } else if (settingsSelection == 4) {  // Clear paired device option
-          clearAllBluetoothBonds();
-          screenDirty = true;
-        } else if (settingsSelection == 2) {  // Back to main menu
-          currentState = UIState::MAIN_MENU;
+        } else if (settingsSelection == 1) {  // Dark mode toggle
+          darkMode = !darkMode;
           screenDirty = true;
         }
       } else if (event.keyCode == HID_KEY_ESCAPE) {

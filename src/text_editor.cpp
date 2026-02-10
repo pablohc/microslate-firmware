@@ -19,6 +19,7 @@ static int cursorLine = 0;
 static int cursorCol = 0;
 static int viewportStartLine = 0;
 static int charsPerLine = 40;
+static int storedVisibleLines = 20;  // Updated by renderer each frame
 
 // Forward declaration
 static void ensureCursorVisible(int visibleLines);
@@ -120,7 +121,7 @@ void editorLoadBuffer(size_t length) {
   viewportStartLine = 0;
   editorRecalculateLines();
   // Scroll to show cursor
-  ensureCursorVisible(20);
+  ensureCursorVisible(storedVisibleLines);
 }
 
 char* editorGetBuffer() { return textBuffer; }
@@ -141,7 +142,7 @@ void editorInsertChar(char c) {
   unsavedChanges = true;
 
   editorRecalculateLines();
-  ensureCursorVisible(20);
+  ensureCursorVisible(storedVisibleLines);
 }
 
 void editorDeleteChar() {
@@ -156,7 +157,7 @@ void editorDeleteChar() {
   unsavedChanges = true;
 
   editorRecalculateLines();
-  ensureCursorVisible(20);
+  ensureCursorVisible(storedVisibleLines);
 }
 
 void editorDeleteForward() {
@@ -170,14 +171,14 @@ void editorDeleteForward() {
   unsavedChanges = true;
 
   editorRecalculateLines();
-  ensureCursorVisible(20);
+  ensureCursorVisible(storedVisibleLines);
 }
 
 void editorMoveCursorLeft() {
   if (cursorPosition > 0) {
     cursorPosition--;
     editorRecalculateLines();
-    ensureCursorVisible(20);
+    ensureCursorVisible(storedVisibleLines);
   }
 }
 
@@ -185,7 +186,7 @@ void editorMoveCursorRight() {
   if (cursorPosition < (int)textLength) {
     cursorPosition++;
     editorRecalculateLines();
-    ensureCursorVisible(20);
+    ensureCursorVisible(storedVisibleLines);
   }
 }
 
@@ -202,7 +203,7 @@ void editorMoveCursorUp() {
 
   cursorPosition = lineStart + std::min(cursorCol, lineLen);
   editorRecalculateLines();
-  ensureCursorVisible(20);
+  ensureCursorVisible(storedVisibleLines);
 }
 
 void editorMoveCursorDown() {
@@ -217,14 +218,14 @@ void editorMoveCursorDown() {
 
   cursorPosition = lineStart + std::min(cursorCol, lineLen);
   editorRecalculateLines();
-  ensureCursorVisible(20);
+  ensureCursorVisible(storedVisibleLines);
 }
 
 void editorMoveCursorHome() {
   editorRecalculateLines();
   cursorPosition = linePositions[cursorLine];
   editorRecalculateLines();
-  ensureCursorVisible(20);
+  ensureCursorVisible(storedVisibleLines);
 }
 
 void editorMoveCursorEnd() {
@@ -239,12 +240,16 @@ void editorMoveCursorEnd() {
   }
   cursorPosition = lineEnd;
   editorRecalculateLines();
-  ensureCursorVisible(20);
+  ensureCursorVisible(storedVisibleLines);
 }
 
 void editorSetCharsPerLine(int cpl) {
   charsPerLine = cpl;
   editorRecalculateLines();
+}
+
+void editorSetVisibleLines(int n) {
+  if (n > 0) storedVisibleLines = n;
 }
 
 int editorGetVisibleLines(int lineHeight, int textAreaHeight) {

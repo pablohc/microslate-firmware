@@ -12,6 +12,8 @@
 
 // External variables
 extern bool autoReconnectEnabled;
+extern bool darkMode;
+extern bool cleanMode;
 
 // External functions
 bool getStoredDevice(std::string& address, std::string& name);
@@ -183,51 +185,43 @@ void drawFileBrowser(GfxRenderer& renderer, HalGPIO& gpio) {
   renderer.clearScreen();
   int sw = renderer.getScreenWidth();
   int sh = renderer.getScreenHeight();
+  bool tc = !darkMode;
+
+  if (darkMode) clippedFillRect(renderer, 0, 0, sw, sh, true);
 
   // Header
-  drawClippedText(renderer, FONT_UI, 10, 10, "Notes", 0, true, EpdFontFamily::BOLD);
-
-  int fc = getFileCount();
-  char countBuf[16];
-  snprintf(countBuf, sizeof(countBuf), "%d files", fc);
-  drawRightText(renderer, FONT_SMALL, sw - 10, 14, countBuf);
+  drawClippedText(renderer, FONT_UI, 10, 10, "Notes", 0, tc, EpdFontFamily::BOLD);
   drawBattery(renderer, gpio);
-
   clippedLine(renderer, 5, 32, sw - 5, 32);
 
-  // File list
-  int lineH = 28;
-  int maxVisible = (sh - 80) / lineH;
+  int fc = getFileCount();
+  int lineH = 30;
+  int maxVisible = (sh - 70) / lineH;
   int startIdx = 0;
   if (fc > maxVisible && selectedFileIndex >= maxVisible) {
     startIdx = selectedFileIndex - maxVisible + 1;
   }
 
   if (fc == 0) {
-    drawClippedText(renderer, FONT_UI, 20, 60, "No notes found.");
-    drawClippedText(renderer, FONT_SMALL, 20, 85, "Press Ctrl+N to create one.");
+    drawClippedText(renderer, FONT_UI, 20, 60, "No notes yet.", 0, tc);
+    drawClippedText(renderer, FONT_SMALL, 20, 82, "Press Ctrl+N to create one.", 0, tc);
   }
 
+  FileInfo* files = getFileList();
   for (int i = startIdx; i < fc && (i - startIdx) < maxVisible; i++) {
-    FileInfo* files = getFileList();
-    int yPos = 40 + (i - startIdx) * lineH;
+    int yPos = 42 + (i - startIdx) * lineH;
 
     if (i == selectedFileIndex) {
-      clippedFillRect(renderer, 5, yPos - 2, sw - 10, lineH - 2, true);
-      drawClippedText(renderer, FONT_UI, 15, yPos, files[i].title, sw - 30, false);
+      clippedFillRect(renderer, 5, yPos - 3, sw - 10, lineH - 1, tc);
+      drawClippedText(renderer, FONT_UI, 15, yPos, files[i].title, sw - 30, !tc);
     } else {
-      drawClippedText(renderer, FONT_UI, 15, yPos, files[i].title, sw - 30);
-      drawClippedText(renderer, FONT_SMALL, 15, yPos + 15, files[i].filename, sw - 30);
+      drawClippedText(renderer, FONT_UI, 15, yPos, files[i].title, sw - 30, tc);
     }
   }
 
-  // Footer
-  constexpr int bm = 60;
-  if (sh > bm + 30) {
-    clippedLine(renderer, 10, sh - bm, sw - 10, sh - bm);
-    drawClippedText(renderer, FONT_SMALL, 20, sh - bm + 12,
-                    "Enter:Open  Ctrl+N:New  Ctrl+R:Rename  Esc:Back");
-  }
+  // Footer: minimal hint
+  drawClippedText(renderer, FONT_SMALL, 10, sh - 18,
+                  "Enter:Open  Ctrl+N:New  F2:Rename  Esc:Back", 0, tc);
 
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 }
@@ -236,29 +230,42 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
   renderer.clearScreen();
   int sw = renderer.getScreenWidth();
   int sh = renderer.getScreenHeight();
+  bool tc = !darkMode;  // text color: black in light mode, white in dark mode
 
-  // --- Header bar ---
-  const char* title = editorGetCurrentTitle();
-  char headerBuf[64];
-  if (editorHasUnsavedChanges()) {
-    snprintf(headerBuf, sizeof(headerBuf), "%s *", title);
+  // Dark mode: fill background black
+  if (darkMode) clippedFillRect(renderer, 0, 0, sw, sh, true);
+
+  // --- Clean mode: no header/footer, just text ---
+  int textAreaTop;
+  if (cleanMode) {
+    textAreaTop = 8;
   } else {
-    strncpy(headerBuf, title, sizeof(headerBuf) - 1);
-    headerBuf[sizeof(headerBuf) - 1] = '\0';
+    // --- Header bar ---
+    const char* title = editorGetCurrentTitle();
+    char headerBuf[64];
+    if (editorHasUnsavedChanges()) {
+      snprintf(headerBuf, sizeof(headerBuf), "%s *", title);
+    } else {
+      strncpy(headerBuf, title, sizeof(headerBuf) - 1);
+      headerBuf[sizeof(headerBuf) - 1] = '\0';
+    }
+    drawClippedText(renderer, FONT_UI, 10, 10, headerBuf, sw - 80, tc, EpdFontFamily::BOLD);
+    drawBattery(renderer, gpio);
+    clippedLine(renderer, 5, 32, sw - 5, 32);
+    textAreaTop = 38;
   }
-  drawClippedText(renderer, FONT_UI, 10, 5, headerBuf, sw - 80, true, EpdFontFamily::BOLD);
-  drawBattery(renderer, gpio);
-  clippedLine(renderer, 5, 25, sw - 5, 25);
 
   // --- Text area ---
-  int textAreaTop = 30;
-  int textAreaBottom = sh - 30;
+  int textAreaBottom = sh - 5;
   int textAreaHeight = textAreaBottom - textAreaTop;
   int lineHeight = renderer.getLineHeight(FONT_BODY);
   if (lineHeight <= 0) lineHeight = 20;
   int visibleLines = textAreaHeight / lineHeight;
 
+  // Tell editor how many lines are visible so scrolling works correctly
+  editorSetVisibleLines(visibleLines);
   editorRecalculateLines();
+
   int vpStart = editorGetViewportStart();
   int totalLines = editorGetLineCount();
   int curLine = editorGetCursorLine();
@@ -266,16 +273,11 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
   char* buf = editorGetBuffer();
   size_t bufLen = editorGetLength();
 
-  // Draw visible lines — truncate to screen width
+  // Draw visible lines
   for (int i = 0; i < visibleLines && (vpStart + i) < totalLines; i++) {
     int lineIdx = vpStart + i;
     int lineStart = editorGetLinePosition(lineIdx);
-    int lineEnd;
-    if (lineIdx + 1 < totalLines) {
-      lineEnd = editorGetLinePosition(lineIdx + 1);
-    } else {
-      lineEnd = (int)bufLen;
-    }
+    int lineEnd = (lineIdx + 1 < totalLines) ? editorGetLinePosition(lineIdx + 1) : (int)bufLen;
 
     int dispEnd = lineEnd;
     if (dispEnd > lineStart && buf[dispEnd - 1] == '\n') dispEnd--;
@@ -288,7 +290,7 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
       lineBuf[copyLen] = '\0';
 
       int yPos = textAreaTop + (i * lineHeight);
-      drawClippedText(renderer, FONT_BODY, 10, yPos, lineBuf, sw - 20);
+      drawClippedText(renderer, FONT_BODY, 10, yPos, lineBuf, sw - 20, tc);
     }
   }
 
@@ -299,8 +301,7 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
 
     int lineStart = editorGetLinePosition(curLine);
     char prefix[256];
-    int prefixLen = curCol;
-    if (prefixLen > (int)sizeof(prefix) - 1) prefixLen = (int)sizeof(prefix) - 1;
+    int prefixLen = (curCol < (int)sizeof(prefix) - 1) ? curCol : (int)sizeof(prefix) - 1;
     strncpy(prefix, buf + lineStart, prefixLen);
     prefix[prefixLen] = '\0';
 
@@ -308,24 +309,9 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
     int cursorW = renderer.getSpaceWidth(FONT_BODY);
     if (cursorW < 2) cursorW = 8;
 
-    // Clamp cursor to screen
     if (cursorX >= 0 && cursorX + cursorW <= sw && cursorY >= 0 && cursorY + lineHeight <= sh) {
-      renderer.fillRect(cursorX, cursorY, cursorW, lineHeight, true);
+      renderer.fillRect(cursorX, cursorY, cursorW, lineHeight, tc);
     }
-  }
-
-  // --- Status bar ---
-  constexpr int bm = 60;
-  if (sh > bm + 30) {
-    clippedLine(renderer, 10, sh - bm, sw - 10, sh - bm);
-
-    char statusLeft[64];
-    snprintf(statusLeft, sizeof(statusLeft), "L%d C%d  %d/%d  %dcpl",
-             curLine + 1, curCol + 1,
-             editorGetCursorPosition(), (int)bufLen, charsPerLine);
-    drawClippedText(renderer, FONT_SMALL, 20, sh - bm + 12, statusLeft, sw / 2 - 20);
-
-    drawRightText(renderer, FONT_SMALL, sw - 20, sh - bm + 12, "Ctrl+S:Save  Ctrl+Q:Back");
   }
 
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
@@ -364,23 +350,26 @@ void drawSettingsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
   int sw = renderer.getScreenWidth();
   int sh = renderer.getScreenHeight();
 
-  drawClippedText(renderer, FONT_UI, 10, 10, "Settings", 0, true, EpdFontFamily::BOLD);
+  if (darkMode) clippedFillRect(renderer, 0, 0, sw, sh, true);
+
+  drawClippedText(renderer, FONT_UI, 10, 10, "Settings", 0, !darkMode, EpdFontFamily::BOLD);
   drawBattery(renderer, gpio);
   clippedLine(renderer, 5, 32, sw - 5, 32);
 
-  // Setting items
-  static const char* labels[] = {"Orientation", "Line Width", "Back", "Bluetooth", "Clear Paired Device"};
+  // Setting items: Orientation, Dark Mode, Back, Bluetooth, Clear Paired
+  static const char* labels[] = {"Orientation", "Dark Mode", "Back", "Bluetooth", "Clear Paired"};
   for (int i = 0; i < 5; i++) {
     int yPos = 50 + (i * 45);
+    bool sel = (i == settingsSelection);
 
-    if (i == settingsSelection) {
-      clippedFillRect(renderer, 5, yPos - 5, sw - 10, 38, true);
-      drawClippedText(renderer, FONT_UI, 15, yPos, labels[i], sw / 2 - 15, false);
+    if (sel) {
+      clippedFillRect(renderer, 5, yPos - 5, sw - 10, 38, !darkMode);
+      drawClippedText(renderer, FONT_UI, 15, yPos, labels[i], sw / 2 - 15, darkMode);
     } else {
-      drawClippedText(renderer, FONT_UI, 15, yPos, labels[i], sw / 2 - 15);
+      drawClippedText(renderer, FONT_UI, 15, yPos, labels[i], sw / 2 - 15, !darkMode);
     }
 
-    // Value display on the right
+    // Value on the right
     char val[32] = "";
     if (i == 0) {
       switch (currentOrientation) {
@@ -390,19 +379,18 @@ void drawSettingsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
         case Orientation::LANDSCAPE_CCW: strcpy(val, "Landscape CCW"); break;
       }
     } else if (i == 1) {
-      snprintf(val, sizeof(val), "%d chars", charsPerLine);
+      strcpy(val, darkMode ? "On" : "Off");
     } else if (i == 4) {
       std::string storedAddr, storedName;
       if (getStoredDevice(storedAddr, storedName)) {
-        snprintf(val, sizeof(val), "Paired: %s", storedName.c_str());
+        snprintf(val, sizeof(val), "%s", storedName.c_str());
       } else {
-        strcpy(val, "None paired");
+        strcpy(val, "None");
       }
     }
 
     if (val[0] != '\0') {
-      bool inverted = (i == settingsSelection);
-      drawRightText(renderer, FONT_UI, sw - 20, yPos, val, !inverted);
+      drawRightText(renderer, FONT_UI, sw - 20, yPos, val, sel ? darkMode : !darkMode);
     }
   }
 
