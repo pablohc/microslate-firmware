@@ -2,6 +2,7 @@
 #include <HalDisplay.h>
 #include <HalGPIO.h>
 #include <GfxRenderer.h>
+#include <esp_pm.h>
 
 #include "config.h"
 #include "ble_keyboard.h"
@@ -43,6 +44,11 @@ bool screenDirty = true;
 char renameBuffer[MAX_FILENAME_LEN] = "";
 int renameBufferLen = 0;
 
+// UI mode flags
+bool darkMode = false;
+bool cleanMode = false;
+bool deleteConfirmPending = false;
+
 // --- Screen update ---
 static void updateScreen() {
   if (!screenDirty) return;
@@ -62,7 +68,13 @@ static void updateScreen() {
     lastOrientation = currentOrientation;
   }
 
-  // Update editor's chars per line
+  // Auto-compute chars per line from font metrics so text always fills the screen
+  {
+    int sw = renderer.getScreenWidth();
+    int textAreaWidth = sw - 20;  // 10px margins each side
+    int avgCharW = renderer.getTextAdvanceX(FONT_BODY, "abcdefghijklmnopqrstuvwxyz") / 26;
+    if (avgCharW > 0) charsPerLine = textAreaWidth / avgCharW;
+  }
   editorSetCharsPerLine(charsPerLine);
 
   switch (currentState) {
@@ -81,6 +93,9 @@ void setup() {
   delay(500);
   Serial.println("MicroSlate starting...");
 
+  // Reduce CPU clock — 80MHz is plenty for this workload, saves ~30% active power
+  setCpuFrequencyMhz(80);
+
   gpio.begin();
   display.begin();
 
@@ -91,6 +106,24 @@ void setup() {
   inputSetup();
   fileManagerSetup();
   bleSetup();
+
+  // Enable automatic light sleep between loop iterations.
+  // FreeRTOS tickless idle will put the CPU to sleep whenever delay() yields
+  // the scheduler and no other tasks are runnable.  BLE stays alive, wake
+  // latency is <1ms — invisible to the user.
+  {
+    esp_pm_config_esp32c3_t pm_config = {
+      .max_freq_mhz      = 80,   // Never exceed 80MHz
+      .min_freq_mhz      = 40,   // Drop to 40MHz when idle
+      .light_sleep_enable = true
+    };
+    esp_err_t err = esp_pm_configure(&pm_config);
+    if (err == ESP_OK) {
+      Serial.println("[PM] Light sleep enabled (80/40MHz)");
+    } else {
+      Serial.printf("[PM] Light sleep config failed: %d — running at 80MHz\n", err);
+    }
+  }
 
   // Initialize auto-reconnect to enabled by default
   autoReconnectEnabled = true;
@@ -262,23 +295,40 @@ static void processPhysicalButtons() {
       }
       break;
 
-    case UIState::TEXT_EDITOR:
-      if (btnUp && !btnUpLast) {
-        enqueueKeyEvent(HID_KEY_UP, 0, true);
-        enqueueKeyEvent(HID_KEY_UP, 0, false);
+    case UIState::TEXT_EDITOR: {
+      // Key repeat state for held navigation/backspace keys
+      static uint8_t repeatKey = 0;
+      static unsigned long repeatStart = 0;
+      static unsigned long lastRepeat = 0;
+      const unsigned long REPEAT_DELAY = 400;
+      const unsigned long REPEAT_RATE  = 80;
+
+      auto fireKey = [](uint8_t k) {
+        enqueueKeyEvent(k, 0, true);
+        enqueueKeyEvent(k, 0, false);
+      };
+
+      // Map currently held button to HID key (0 = none)
+      uint8_t heldKey = 0;
+      if      (btnUp)    heldKey = HID_KEY_UP;
+      else if (btnDown)  heldKey = HID_KEY_DOWN;
+      else if (btnLeft)  heldKey = HID_KEY_LEFT;
+      else if (btnRight) heldKey = HID_KEY_RIGHT;
+
+      if (heldKey != repeatKey) {
+        // Key changed — fire immediately on press
+        if (heldKey != 0) fireKey(heldKey);
+        repeatKey   = heldKey;
+        repeatStart = millis();
+        lastRepeat  = millis();
+      } else if (heldKey != 0) {
+        unsigned long now = millis();
+        if (now - repeatStart > REPEAT_DELAY && now - lastRepeat > REPEAT_RATE) {
+          fireKey(heldKey);
+          lastRepeat = now;
+        }
       }
-      if (btnDown && !btnDownLast) {
-        enqueueKeyEvent(HID_KEY_DOWN, 0, true);
-        enqueueKeyEvent(HID_KEY_DOWN, 0, false);
-      }
-      if (btnLeft && !btnLeftLast) {
-        enqueueKeyEvent(HID_KEY_LEFT, 0, true);
-        enqueueKeyEvent(HID_KEY_LEFT, 0, false);
-      }
-      if (btnRight && !btnRightLast) {
-        enqueueKeyEvent(HID_KEY_RIGHT, 0, true);
-        enqueueKeyEvent(HID_KEY_RIGHT, 0, false);
-      }
+
       if (btnConfirm && !btnConfirmLast) {
         enqueueKeyEvent(HID_KEY_ENTER, 0, true);
         enqueueKeyEvent(HID_KEY_ENTER, 0, false);
@@ -288,6 +338,7 @@ static void processPhysicalButtons() {
         screenDirty = true;
       }
       break;
+    }
 
     case UIState::RENAME_FILE:
     case UIState::NEW_FILE:

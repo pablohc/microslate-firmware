@@ -8,6 +8,9 @@
 
 // External variables
 extern bool autoReconnectEnabled;
+extern bool darkMode;
+extern bool cleanMode;
+extern bool deleteConfirmPending;
 
 // External functions
 void storePairedDevice(const std::string& address, const std::string& name);
@@ -26,6 +29,12 @@ static volatile bool queueFull = false;
 
 // --- CapsLock state ---
 static bool capsLockOn = false;
+
+// Where to return after title edit is confirmed or cancelled
+static UIState renameReturnState = UIState::FILE_BROWSER;
+
+// Forward declaration
+static void openTitleEdit(const char* currentTitle, UIState returnTo);
 
 // --- Shared UI state (defined in main.cpp) ---
 extern UIState currentState;
@@ -123,17 +132,25 @@ static void handleEditorKey(uint8_t keyCode, uint8_t modifiers) {
       screenDirty = true;
       return;
     }
-    if (keyCode == HID_KEY_Q) {
-      if (editorHasUnsavedChanges()) saveCurrentFile();
-      currentState = UIState::FILE_BROWSER;
+    if (keyCode == HID_KEY_Z) {
+      cleanMode = !cleanMode;
       screenDirty = true;
       return;
     }
-    if (keyCode == HID_KEY_N) {
-      createNewFile();
-      screenDirty = true;
-      return;
-    }
+    return;
+  }
+
+  // Ctrl+T = edit title
+  if (isCtrl(modifiers) && keyCode == HID_KEY_T) {
+    openTitleEdit(editorGetCurrentTitle(), UIState::TEXT_EDITOR);
+    return;
+  }
+
+  // ESC = save and return to file browser
+  if (keyCode == HID_KEY_ESCAPE) {
+    if (editorHasUnsavedChanges()) saveCurrentFile();
+    currentState = UIState::FILE_BROWSER;
+    screenDirty = true;
     return;
   }
 
@@ -163,26 +180,38 @@ static void handleEditorKey(uint8_t keyCode, uint8_t modifiers) {
   }
 }
 
-// Handle rename input
+// Open the title edit screen, returning to `returnTo` on confirm/cancel
+static void openTitleEdit(const char* currentTitle, UIState returnTo) {
+  strncpy(renameBuffer, currentTitle, MAX_TITLE_LEN - 1);
+  renameBuffer[MAX_TITLE_LEN - 1] = '\0';
+  renameBufferLen = strlen(renameBuffer);
+  renameReturnState = returnTo;
+  currentState = UIState::RENAME_FILE;
+  screenDirty = true;
+}
+
+// Handle title edit input
 static void handleRenameKey(uint8_t keyCode, uint8_t modifiers) {
   if (keyCode == HID_KEY_ENTER) {
     if (renameBufferLen > 0) {
-      char oldPath[128], newPath[128];
-      FileInfo* files = getFileList();
-      snprintf(oldPath, sizeof(oldPath), "/notes/%s", files[selectedFileIndex].filename);
-      snprintf(newPath, sizeof(newPath), "/notes/%s.txt", renameBuffer);
-      if (!SdMan.exists(newPath)) {
-        SdMan.rename(oldPath, newPath);
-        refreshFileList();
-        currentState = UIState::FILE_BROWSER;
+      if (renameReturnState == UIState::TEXT_EDITOR) {
+        // Updating title of the currently open file
+        editorSetCurrentTitle(renameBuffer);
+        editorSetUnsavedChanges(true);
+        saveCurrentFile();
+      } else {
+        // Updating title of a file selected in the browser
+        FileInfo* files = getFileList();
+        updateFileTitle(files[selectedFileIndex].filename, renameBuffer);
       }
     }
+    currentState = renameReturnState;
     screenDirty = true;
     return;
   }
 
   if (keyCode == HID_KEY_ESCAPE) {
-    currentState = UIState::FILE_BROWSER;
+    currentState = renameReturnState;
     screenDirty = true;
     return;
   }
@@ -196,19 +225,12 @@ static void handleRenameKey(uint8_t keyCode, uint8_t modifiers) {
     return;
   }
 
+  // Allow all printable characters in a title (including spaces)
   char c = hidToAscii(keyCode, modifiers);
-  if (c != 0 && renameBufferLen < MAX_FILENAME_LEN - 5) {
-    // Only allow safe filename characters
-    if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
-        (c >= '0' && c <= '9') || c == '_' || c == '-' || c == '.') {
-      renameBuffer[renameBufferLen++] = c;
-      renameBuffer[renameBufferLen] = '\0';
-      screenDirty = true;
-    } else if (c == ' ') {
-      renameBuffer[renameBufferLen++] = '_';
-      renameBuffer[renameBufferLen] = '\0';
-      screenDirty = true;
-    }
+  if (c != 0 && c >= ' ' && renameBufferLen < MAX_TITLE_LEN - 1) {
+    renameBuffer[renameBufferLen++] = c;
+    renameBuffer[renameBufferLen] = '\0';
+    screenDirty = true;
   }
 }
 
@@ -229,7 +251,7 @@ static void dispatchEvent(const KeyEvent& event) {
           screenDirty = true;
         } else if (mainMenuSelection == 1) {
           createNewFile();
-          screenDirty = true;
+          openTitleEdit("Untitled", UIState::TEXT_EDITOR);
         } else if (mainMenuSelection == 2) {
           currentState = UIState::SETTINGS;
           screenDirty = true;
@@ -240,6 +262,21 @@ static void dispatchEvent(const KeyEvent& event) {
 
     case UIState::FILE_BROWSER: {
       int fc = getFileCount();
+
+      // Delete confirmation pending — Enter confirms, anything else cancels
+      if (deleteConfirmPending) {
+        if (event.keyCode == HID_KEY_ENTER && fc > 0) {
+          FileInfo* files = getFileList();
+          deleteFile(files[selectedFileIndex].filename);
+          int newFc = getFileCount();
+          if (selectedFileIndex >= newFc) selectedFileIndex = newFc - 1;
+          if (selectedFileIndex < 0) selectedFileIndex = 0;
+        }
+        deleteConfirmPending = false;
+        screenDirty = true;
+        break;
+      }
+
       if (event.keyCode == HID_KEY_DOWN && fc > 0) {
         selectedFileIndex = (selectedFileIndex + 1) % fc;
         screenDirty = true;
@@ -250,23 +287,14 @@ static void dispatchEvent(const KeyEvent& event) {
         FileInfo* files = getFileList();
         loadFile(files[selectedFileIndex].filename);
         screenDirty = true;
-      } else if (isCtrl(event.modifiers) && event.keyCode == HID_KEY_N) {
-        createNewFile();
-        screenDirty = true;
-      } else if ((isCtrl(event.modifiers) && event.keyCode == HID_KEY_R) ||
-                 event.keyCode == HID_KEY_F2) {
+      } else if (isCtrl(event.modifiers) && event.keyCode == HID_KEY_T) {
         if (fc > 0) {
-          currentState = UIState::RENAME_FILE;
           FileInfo* files = getFileList();
-          // Copy filename without .txt
-          strncpy(renameBuffer, files[selectedFileIndex].filename, MAX_FILENAME_LEN - 1);
-          renameBuffer[MAX_FILENAME_LEN - 1] = '\0';
-          // Remove .txt extension
-          int len = strlen(renameBuffer);
-          if (len > 4 && strcmp(renameBuffer + len - 4, ".txt") == 0) {
-            renameBuffer[len - 4] = '\0';
-          }
-          renameBufferLen = strlen(renameBuffer);
+          openTitleEdit(files[selectedFileIndex].title, UIState::FILE_BROWSER);
+        }
+      } else if (isCtrl(event.modifiers) && event.keyCode == HID_KEY_D) {
+        if (fc > 0) {
+          deleteConfirmPending = true;
           screenDirty = true;
         }
       } else if (event.keyCode == HID_KEY_ESCAPE) {
@@ -285,19 +313,26 @@ static void dispatchEvent(const KeyEvent& event) {
       break;
 
     case UIState::SETTINGS: {
+      const int SETTINGS_COUNT = 4;  // Orientation, Dark Mode, Bluetooth, Clear Paired
       if (event.keyCode == HID_KEY_DOWN) {
-        settingsSelection = (settingsSelection + 1) % 5;  // Increased to 5 options
+        settingsSelection = (settingsSelection + 1) % SETTINGS_COUNT;
         screenDirty = true;
       } else if (event.keyCode == HID_KEY_UP) {
-        settingsSelection = (settingsSelection - 1 + 5) % 5;  // Increased to 5 options
+        settingsSelection = (settingsSelection - 1 + SETTINGS_COUNT) % SETTINGS_COUNT;
         screenDirty = true;
-      } else if (event.keyCode == HID_KEY_RIGHT) {
+      } else if (event.keyCode == HID_KEY_RIGHT || event.keyCode == HID_KEY_ENTER) {
         if (settingsSelection == 0) {
           int v = static_cast<int>(currentOrientation);
           currentOrientation = static_cast<Orientation>((v + 1) % 4);
           screenDirty = true;
-        } else if (settingsSelection == 1 && charsPerLine < 60) {
-          charsPerLine += 5;
+        } else if (settingsSelection == 1) {  // Dark mode toggle
+          darkMode = !darkMode;
+          screenDirty = true;
+        } else if (settingsSelection == 2) {  // Bluetooth settings
+          currentState = UIState::BLUETOOTH_SETTINGS;
+          screenDirty = true;
+        } else if (settingsSelection == 3) {  // Clear paired device
+          clearAllBluetoothBonds();
           screenDirty = true;
         }
       } else if (event.keyCode == HID_KEY_LEFT) {
@@ -305,19 +340,8 @@ static void dispatchEvent(const KeyEvent& event) {
           int v = static_cast<int>(currentOrientation);
           currentOrientation = static_cast<Orientation>((v - 1 + 4) % 4);
           screenDirty = true;
-        } else if (settingsSelection == 1 && charsPerLine > 20) {
-          charsPerLine -= 5;
-          screenDirty = true;
-        }
-      } else if (event.keyCode == HID_KEY_ENTER) {
-        if (settingsSelection == 3) {  // Bluetooth settings option
-          currentState = UIState::BLUETOOTH_SETTINGS;
-          screenDirty = true;
-        } else if (settingsSelection == 4) {  // Clear paired device option
-          clearAllBluetoothBonds();
-          screenDirty = true;
-        } else if (settingsSelection == 2) {  // Back to main menu
-          currentState = UIState::MAIN_MENU;
+        } else if (settingsSelection == 1) {  // Dark mode toggle
+          darkMode = !darkMode;
           screenDirty = true;
         }
       } else if (event.keyCode == HID_KEY_ESCAPE) {

@@ -61,10 +61,13 @@ static constexpr int MAX_LINES = 1024;
 
 // --- HID Keycodes ---
 static constexpr uint8_t HID_KEY_A          = 0x04;
+static constexpr uint8_t HID_KEY_D          = 0x07;
 static constexpr uint8_t HID_KEY_N          = 0x11;
 static constexpr uint8_t HID_KEY_Q          = 0x14;
 static constexpr uint8_t HID_KEY_R          = 0x15;
 static constexpr uint8_t HID_KEY_S          = 0x16;
+static constexpr uint8_t HID_KEY_T          = 0x17;
+static constexpr uint8_t HID_KEY_Z          = 0x1D;
 static constexpr uint8_t HID_KEY_ENTER      = 0x28;
 static constexpr uint8_t HID_KEY_ESCAPE     = 0x29;
 static constexpr uint8_t HID_KEY_BACKSPACE  = 0x2A;
