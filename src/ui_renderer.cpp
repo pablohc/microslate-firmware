@@ -93,7 +93,9 @@ static void drawRightText(GfxRenderer& r, int font, int rightEdge, int y,
                           const char* text, bool black = true,
                           EpdFontFamily::Style style = EpdFontFamily::REGULAR) {
   if (!text || !text[0]) return;
-  int tw = r.getTextAdvanceX(font, text);
+  // Use getTextWidth (bounding box) — same measurement truncatedText uses —
+  // so the allocated space always matches what the truncation check expects.
+  int tw = r.getTextWidth(font, text, style);
   if (tw <= 0) tw = 30;                    // safe fallback
   int x = rightEdge - tw;
   if (x < 5) x = 5;                        // don't go off left edge
@@ -101,7 +103,8 @@ static void drawRightText(GfxRenderer& r, int font, int rightEdge, int y,
 }
 
 // Safe line — just clamp to screen
-static void clippedLine(GfxRenderer& r, int x1, int y1, int x2, int y2) {
+static void clippedLine(GfxRenderer& r, int x1, int y1, int x2, int y2,
+                        bool state = true) {
   int sw = r.getScreenWidth();
   int sh = r.getScreenHeight();
   // Clamp rather than reject
@@ -110,7 +113,7 @@ static void clippedLine(GfxRenderer& r, int x1, int y1, int x2, int y2) {
   x2 = clamp(x2, 0, sw - 1);
   y1 = clamp(y1, 0, sh - 1);
   y2 = clamp(y2, 0, sh - 1);
-  r.drawLine(x1, y1, x2, y2);
+  r.drawLine(x1, y1, x2, y2, state);
 }
 
 // Safe fillRect — clamp dimensions to screen
@@ -132,7 +135,7 @@ static void drawBattery(GfxRenderer& renderer, HalGPIO& gpio) {
   int pct = gpio.getBatteryPercentage();
   char buf[8];
   snprintf(buf, sizeof(buf), "%d%%", pct);
-  drawRightText(renderer, FONT_SMALL, renderer.getScreenWidth() - 8, 5, buf);
+  drawRightText(renderer, FONT_SMALL, renderer.getScreenWidth() - 8, 5, buf, !darkMode);
 }
 
 // Helper: draw BLE status
@@ -144,7 +147,7 @@ static void drawBleStatus(GfxRenderer& renderer, int x, int y) {
     case BLEState::CONNECTING:   status = "Connecting..."; break;
     case BLEState::DISCONNECTED: status = "KB Disconnected"; break;
   }
-  drawClippedText(renderer, FONT_SMALL, x, y, status);
+  drawClippedText(renderer, FONT_SMALL, x, y, status, 0, !darkMode);
 }
 
 // ===========================================================================
@@ -155,19 +158,22 @@ void drawMainMenu(GfxRenderer& renderer, HalGPIO& gpio) {
   renderer.clearScreen();
   int sw = renderer.getScreenWidth();
   int sh = renderer.getScreenHeight();
+  bool tc = !darkMode;  // text color
+
+  if (darkMode) clippedFillRect(renderer, 0, 0, sw, sh, true);
 
   // Title
-  renderer.drawCenteredText(FONT_BODY, 30, "MicroSlate", true, EpdFontFamily::BOLD);
+  renderer.drawCenteredText(FONT_BODY, 30, "MicroSlate", tc, EpdFontFamily::BOLD);
 
   // Menu items
   static const char* menuItems[] = {"Browse Files", "New Note", "Settings"};
   for (int i = 0; i < 3; i++) {
     int yPos = 90 + (i * 45);
     if (i == mainMenuSelection) {
-      clippedFillRect(renderer, 5, yPos - 5, sw - 10, 35, true);
-      drawClippedText(renderer, FONT_UI, 20, yPos, menuItems[i], sw - 40, false);
+      clippedFillRect(renderer, 5, yPos - 5, sw - 10, 35, tc);
+      drawClippedText(renderer, FONT_UI, 20, yPos, menuItems[i], sw - 40, !tc);
     } else {
-      drawClippedText(renderer, FONT_UI, 20, yPos, menuItems[i], sw - 40);
+      drawClippedText(renderer, FONT_UI, 20, yPos, menuItems[i], sw - 40, tc);
     }
   }
 
@@ -175,7 +181,7 @@ void drawMainMenu(GfxRenderer& renderer, HalGPIO& gpio) {
   constexpr int bm = 60;
   if (sh > bm + 40) {
     clippedLine(renderer, 10, sh - bm, sw - 10, sh - bm);
-    drawClippedText(renderer, FONT_SMALL, 20, sh - bm + 12, "Arrows: Navigate  Enter: Select");
+    drawClippedText(renderer, FONT_SMALL, 20, sh - bm + 12, "Arrows: Navigate  Enter: Select", 0, tc);
     drawBleStatus(renderer, 20, sh - bm + 28);
   }
   drawBattery(renderer, gpio);
@@ -328,22 +334,26 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
 void drawRenameScreen(GfxRenderer& renderer) {
   renderer.clearScreen();
   int sw = renderer.getScreenWidth();
+  int sh = renderer.getScreenHeight();
+  bool tc = !darkMode;
 
-  drawClippedText(renderer, FONT_SMALL, 10, 5, "Edit Title", 0, true, EpdFontFamily::BOLD);
-  clippedLine(renderer, 5, 32, sw - 5, 32);
+  if (darkMode) clippedFillRect(renderer, 0, 0, sw, sh, true);
 
-  drawClippedText(renderer, FONT_SMALL, 20, 42, "Note title:");
-  renderer.drawRect(15, 58, sw - 30, 30);
-  drawClippedText(renderer, FONT_UI, 20, 62, renameBuffer, sw - 50);
+  drawClippedText(renderer, FONT_SMALL, 10, 5, "Edit Title", 0, tc, EpdFontFamily::BOLD);
+  clippedLine(renderer, 5, 32, sw - 5, 32, tc);
+
+  drawClippedText(renderer, FONT_SMALL, 20, 42, "Note title:", 0, tc);
+  renderer.drawRect(15, 58, sw - 30, 30, tc);
+  drawClippedText(renderer, FONT_UI, 20, 62, renameBuffer, sw - 50, tc);
 
   // Cursor
   int cursorX = 20 + renderer.getTextAdvanceX(FONT_UI, renameBuffer);
   int cursorW = renderer.getSpaceWidth(FONT_UI);
   if (cursorW < 2) cursorW = 8;
   if (cursorX + cursorW < sw)
-    renderer.fillRect(cursorX, 62, cursorW, 20, true);
+    renderer.fillRect(cursorX, 62, cursorW, 20, tc);
 
-  drawClippedText(renderer, FONT_SMALL, 20, 110, "Enter: Confirm   Esc: Cancel");
+  drawClippedText(renderer, FONT_SMALL, 20, 110, "Enter: Confirm   Esc: Cancel", 0, tc);
 
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 }
@@ -382,7 +392,7 @@ void drawSettingsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
         case Orientation::LANDSCAPE_CCW: strcpy(val, "Landscape CCW"); break;
       }
     } else if (i == 1) {
-      strcpy(val, darkMode ? "On" : "Off");
+      strcpy(val, darkMode ? "Dark" : "Light");
     } else if (i == 2) {
       switch (refreshSpeed) {
         case RefreshSpeed::FAST:     strcpy(val, "Fast"); break;
@@ -406,9 +416,9 @@ void drawSettingsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
   // Footer
   constexpr int bm = 60;
   if (sh > bm + 30) {
-    clippedLine(renderer, 10, sh - bm, sw - 10, sh - bm);
+    clippedLine(renderer, 10, sh - bm, sw - 10, sh - bm, !darkMode);
     drawClippedText(renderer, FONT_SMALL, 20, sh - bm + 12,
-                    "Arrows:Nav  L/R:Change  Enter:Select  Esc:Back");
+                    "Arrows:Nav  L/R:Change  Enter:Select  Esc:Back", 0, !darkMode);
   }
 
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
@@ -419,11 +429,14 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
   int sh = renderer.getScreenHeight();
 
   renderer.clearScreen();
+  bool tc = !darkMode;
+
+  if (darkMode) clippedFillRect(renderer, 0, 0, sw, sh, true);
 
   // Header
-  drawClippedText(renderer, FONT_SMALL, 10, 5, "Bluetooth Devices", 0, true, EpdFontFamily::BOLD);
+  drawClippedText(renderer, FONT_SMALL, 10, 5, "Bluetooth Devices", 0, tc, EpdFontFamily::BOLD);
   drawBattery(renderer, gpio);
-  clippedLine(renderer, 5, 32, sw - 5, 32);
+  clippedLine(renderer, 5, 32, sw - 5, 32, tc);
 
   // Connection status
   const char* status;
@@ -433,25 +446,25 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
     case BLEState::CONNECTING:   status = "Connecting..."; break;
     case BLEState::DISCONNECTED: status = "Not connected"; break;
   }
-  drawClippedText(renderer, FONT_SMALL, 10, 45, status, sw / 2 - 10);
+  drawClippedText(renderer, FONT_SMALL, 10, 45, status, sw / 2 - 10, tc);
 
   // Paired device info
   std::string storedAddr, storedName;
   if (getStoredDevice(storedAddr, storedName)) {
     char pairedStr[64];
     snprintf(pairedStr, sizeof(pairedStr), "Paired: %s", storedName.c_str());
-    drawClippedText(renderer, FONT_SMALL, sw / 2, 45, pairedStr, sw / 2 - 10);
+    drawClippedText(renderer, FONT_SMALL, sw / 2, 45, pairedStr, sw / 2 - 10, tc);
   }
 
   // Passkey display
   uint32_t passkey = getCurrentPasskey();
   if (passkey > 0) {
     char passkeyStr[32];
-    drawClippedText(renderer, FONT_UI, 20, 100, "PAIRING CODE:", 0, true, EpdFontFamily::BOLD);
+    drawClippedText(renderer, FONT_UI, 20, 100, "PAIRING CODE:", 0, tc, EpdFontFamily::BOLD);
     snprintf(passkeyStr, sizeof(passkeyStr), "%06lu", passkey);
-    drawClippedText(renderer, FONT_BODY, 20, 130, passkeyStr, 0, true, EpdFontFamily::BOLD);
-    drawClippedText(renderer, FONT_SMALL, 20, 160, "Type this code on your keyboard");
-    drawClippedText(renderer, FONT_SMALL, 20, 180, "then press Enter");
+    drawClippedText(renderer, FONT_BODY, 20, 130, passkeyStr, 0, tc, EpdFontFamily::BOLD);
+    drawClippedText(renderer, FONT_SMALL, 20, 160, "Type this code on your keyboard", 0, tc);
+    drawClippedText(renderer, FONT_SMALL, 20, 180, "then press Enter", 0, tc);
   } else if (isDeviceScanning()) {
     static uint8_t dotPhase = 0;
     static uint32_t lastAnimMs = 0;
@@ -463,11 +476,11 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
     char scanningStr[64];
     int deviceCount = getDiscoveredDeviceCount();
     snprintf(scanningStr, sizeof(scanningStr), "Searching for devices%s", dots.c_str());
-    drawClippedText(renderer, FONT_SMALL, 10, 60, scanningStr, sw / 2 - 10);
+    drawClippedText(renderer, FONT_SMALL, 10, 60, scanningStr, sw / 2 - 10, tc);
 
     char foundStr[32];
     snprintf(foundStr, sizeof(foundStr), "Found: %d", deviceCount);
-    drawClippedText(renderer, FONT_SMALL, sw / 2, 60, foundStr, sw / 2 - 10);
+    drawClippedText(renderer, FONT_SMALL, sw / 2, 60, foundStr, sw / 2 - 10, tc);
   }
 
   // Device list
@@ -477,7 +490,7 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
 
     char headerStr[64];
     snprintf(headerStr, sizeof(headerStr), "Available devices: %d", deviceCount);
-    drawClippedText(renderer, FONT_SMALL, 10, 70, headerStr, 0, true, EpdFontFamily::BOLD);
+    drawClippedText(renderer, FONT_SMALL, 10, 70, headerStr, 0, tc, EpdFontFamily::BOLD);
 
     // Show up to 10 devices (pagination via scrolling)
     int maxDevicesToShow = 10;
@@ -506,16 +519,16 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
       int nameMaxW = sw - 100;
 
       if (isSelected || isConnected) {
-        clippedFillRect(renderer, 5, yPos - 5, sw - 10, 25, true);
-        drawClippedText(renderer, FONT_UI, 15, yPos, displayName, nameMaxW, false);
+        clippedFillRect(renderer, 5, yPos - 5, sw - 10, 25, tc);
+        drawClippedText(renderer, FONT_UI, 15, yPos, displayName, nameMaxW, !tc);
       } else {
-        drawClippedText(renderer, FONT_UI, 15, yPos, displayName, nameMaxW);
+        drawClippedText(renderer, FONT_UI, 15, yPos, displayName, nameMaxW, tc);
       }
 
       // RSSI on the right
       char rssiStr[16];
       snprintf(rssiStr, sizeof(rssiStr), "%ddBm", devices[deviceIndex].rssi);
-      drawRightText(renderer, FONT_SMALL, sw - 10, yPos, rssiStr);
+      drawRightText(renderer, FONT_SMALL, sw - 10, yPos, rssiStr, tc);
     }
 
     // Page indicator
@@ -526,19 +539,19 @@ void drawBluetoothSettings(GfxRenderer& renderer, HalGPIO& gpio) {
       snprintf(navHint, sizeof(navHint), "Page %d/%d", pageNum, totalPages);
       int navY = 90 + (devicesToShow * 30);
       if (navY < sh - 100)
-        drawClippedText(renderer, FONT_SMALL, 15, navY, navHint);
+        drawClippedText(renderer, FONT_SMALL, 15, navY, navHint, 0, tc);
     }
   } else {
-    drawClippedText(renderer, FONT_UI, 20, 80, "No devices found");
-    drawClippedText(renderer, FONT_SMALL, 20, 100, "Press Enter to scan for devices");
+    drawClippedText(renderer, FONT_UI, 20, 80, "No devices found", 0, tc);
+    drawClippedText(renderer, FONT_SMALL, 20, 100, "Press Enter to scan for devices", 0, tc);
   }
 
   // Footer
   constexpr int bm = 60;
   if (sh > bm + 30) {
-    clippedLine(renderer, 10, sh - bm, sw - 10, sh - bm);
+    clippedLine(renderer, 10, sh - bm, sw - 10, sh - bm, tc);
     drawClippedText(renderer, FONT_SMALL, 20, sh - bm + 12,
-                    "Enter:Connect  Right:Scan  Left:Disconnect  Esc:Back");
+                    "Enter:Connect  Right:Scan  Left:Disconnect  Esc:Back", 0, tc);
   }
 
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
