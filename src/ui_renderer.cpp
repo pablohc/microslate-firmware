@@ -50,6 +50,7 @@ extern int selectedFileIndex;
 extern int settingsSelection;
 extern int bluetoothDeviceSelection;
 extern Orientation currentOrientation;
+extern RefreshSpeed refreshSpeed;
 extern int charsPerLine;
 extern char renameBuffer[];
 extern int renameBufferLen;
@@ -359,14 +360,14 @@ void drawSettingsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
   drawBattery(renderer, gpio);
   clippedLine(renderer, 5, 32, sw - 5, 32);
 
-  // Setting items: Orientation, Dark Mode, Bluetooth, Clear Paired
-  static const char* labels[] = {"Orientation", "Dark Mode", "Bluetooth", "Clear Paired"};
-  for (int i = 0; i < 4; i++) {
-    int yPos = 50 + (i * 45);
+  // Setting items: Orientation, Dark Mode, Refresh Speed, Bluetooth, Clear Paired
+  static const char* labels[] = {"Orientation", "Dark Mode", "Refresh Speed", "Bluetooth", "Clear Paired"};
+  for (int i = 0; i < 5; i++) {
+    int yPos = 50 + (i * 38);
     bool sel = (i == settingsSelection);
 
     if (sel) {
-      clippedFillRect(renderer, 5, yPos - 5, sw - 10, 38, !darkMode);
+      clippedFillRect(renderer, 5, yPos - 5, sw - 10, 32, !darkMode);
       drawClippedText(renderer, FONT_UI, 15, yPos, labels[i], sw / 2 - 15, darkMode);
     } else {
       drawClippedText(renderer, FONT_UI, 15, yPos, labels[i], sw / 2 - 15, !darkMode);
@@ -383,7 +384,13 @@ void drawSettingsMenu(GfxRenderer& renderer, HalGPIO& gpio) {
       }
     } else if (i == 1) {
       strcpy(val, darkMode ? "On" : "Off");
-    } else if (i == 3) {
+    } else if (i == 2) {
+      switch (refreshSpeed) {
+        case RefreshSpeed::FAST:     strcpy(val, "Fast"); break;
+        case RefreshSpeed::BALANCED: strcpy(val, "Balanced"); break;
+        case RefreshSpeed::SAVING:   strcpy(val, "Battery Saver"); break;
+      }
+    } else if (i == 4) {
       std::string storedAddr, storedName;
       if (getStoredDevice(storedAddr, storedName)) {
         snprintf(val, sizeof(val), "%s", storedName.c_str());

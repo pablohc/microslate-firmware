@@ -50,6 +50,7 @@ int renameBufferLen = 0;
 
 // UI mode flags
 bool darkMode = false;
+RefreshSpeed refreshSpeed = RefreshSpeed::BALANCED;
 bool cleanMode = false;
 bool deleteConfirmPending = false;
 
@@ -132,6 +133,7 @@ void setup() {
   uiPrefs.begin("ui_prefs", false);
   currentOrientation = static_cast<Orientation>(uiPrefs.getUChar("orient", 0));
   darkMode = uiPrefs.getBool("darkMode", false);
+  refreshSpeed = static_cast<RefreshSpeed>(uiPrefs.getUChar("refreshSpd", 1)); // default BALANCED
 
   // Initialize auto-reconnect to enabled by default
   autoReconnectEnabled = true;
@@ -498,32 +500,35 @@ void loop() {
     lastInputTime = millis();
   }
 
-  // Adaptive screen refresh: debounce rapid input, batch keystrokes into fewer redraws.
-  // - Critical updates (passkey display) bypass all rate limiting
-  // - After input: wait 100ms for more input before refreshing (batches typing)
-  // - Max 500ms between refreshes so the screen never feels unresponsive
-  static unsigned long lastScreenUpdate = 0;
+  // Cooldown-based screen refresh: the e-ink refresh (~430ms) IS the rate limiter.
+  // After each refresh completes, wait a configurable cooldown, then show all
+  // accumulated keystrokes at once. No artificial debounce — characters appear as
+  // fast as the display allows. Longer cooldown = fewer refreshes = more battery savings.
+  static unsigned long lastRefreshDoneMs = 0;
   unsigned long now = millis();
 
   bool criticalUpdate = (currentState == UIState::BLUETOOTH_SETTINGS && getCurrentPasskey() > 0);
 
   if (screenDirty) {
-    bool debounceMet = (now - lastInputTime >= 100);        // 100ms since last input
-    bool maxIntervalMet = (now - lastScreenUpdate >= 500);   // 500ms cap
-    if (criticalUpdate || debounceMet || maxIntervalMet) {
+    bool cooldownMet = (now - lastRefreshDoneMs >= refreshCooldownMs(refreshSpeed));
+    if (criticalUpdate || cooldownMet) {
       updateScreen();
-      lastScreenUpdate = now;
+      lastRefreshDoneMs = millis();  // Use millis() AFTER refresh (which blocks ~430ms)
     }
   }
 
   // Persist UI settings to NVS when they change (NVS write only on change, not every loop)
   static Orientation lastSavedOrientation = currentOrientation;
   static bool lastSavedDarkMode = darkMode;
-  if (currentOrientation != lastSavedOrientation || darkMode != lastSavedDarkMode) {
+  static RefreshSpeed lastSavedRefreshSpeed = refreshSpeed;
+  if (currentOrientation != lastSavedOrientation || darkMode != lastSavedDarkMode
+      || refreshSpeed != lastSavedRefreshSpeed) {
     uiPrefs.putUChar("orient", static_cast<uint8_t>(currentOrientation));
     uiPrefs.putBool("darkMode", darkMode);
+    uiPrefs.putUChar("refreshSpd", static_cast<uint8_t>(refreshSpeed));
     lastSavedOrientation = currentOrientation;
     lastSavedDarkMode = darkMode;
+    lastSavedRefreshSpeed = refreshSpeed;
   }
 
   // Check for idle timeout

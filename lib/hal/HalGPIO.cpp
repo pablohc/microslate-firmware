@@ -37,7 +37,15 @@ void HalGPIO::startDeepSleep() {
 
 int HalGPIO::getBatteryPercentage() const {
   static const BatteryMonitor battery = BatteryMonitor(BAT_GPIO0);
-  return battery.readPercentage();
+  static int cachedPct = -1;
+  static unsigned long lastReadMs = 0;
+  unsigned long now = millis();
+  // Battery voltage changes on a timescale of minutes — no need to read every frame
+  if (cachedPct < 0 || (now - lastReadMs) >= 30000) {
+    cachedPct = battery.readPercentage();
+    lastReadMs = now;
+  }
+  return cachedPct;
 }
 
 bool HalGPIO::isUsbConnected() const {

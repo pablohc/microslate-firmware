@@ -43,6 +43,7 @@ extern int selectedFileIndex;
 extern int settingsSelection;
 extern int bluetoothDeviceSelection;
 extern Orientation currentOrientation;
+extern RefreshSpeed refreshSpeed;
 extern int charsPerLine;
 extern bool screenDirty;
 extern char renameBuffer[];
@@ -321,7 +322,7 @@ static void dispatchEvent(const KeyEvent& event) {
       break;
 
     case UIState::SETTINGS: {
-      const int SETTINGS_COUNT = 4;  // Orientation, Dark Mode, Bluetooth, Clear Paired
+      const int SETTINGS_COUNT = 5;  // Orientation, Dark Mode, Refresh Speed, Bluetooth, Clear Paired
       if (event.keyCode == HID_KEY_DOWN) {
         settingsSelection = (settingsSelection + 1) % SETTINGS_COUNT;
         screenDirty = true;
@@ -336,10 +337,14 @@ static void dispatchEvent(const KeyEvent& event) {
         } else if (settingsSelection == 1) {  // Dark mode toggle
           darkMode = !darkMode;
           screenDirty = true;
-        } else if (settingsSelection == 2) {  // Bluetooth settings
+        } else if (settingsSelection == 2) {  // Refresh speed cycle
+          int v = static_cast<int>(refreshSpeed);
+          refreshSpeed = static_cast<RefreshSpeed>((v + 1) % 3);
+          screenDirty = true;
+        } else if (settingsSelection == 3) {  // Bluetooth settings
           currentState = UIState::BLUETOOTH_SETTINGS;
           screenDirty = true;
-        } else if (settingsSelection == 3) {  // Clear paired device
+        } else if (settingsSelection == 4) {  // Clear paired device
           clearAllBluetoothBonds();
           screenDirty = true;
         }
@@ -350,6 +355,10 @@ static void dispatchEvent(const KeyEvent& event) {
           screenDirty = true;
         } else if (settingsSelection == 1) {  // Dark mode toggle
           darkMode = !darkMode;
+          screenDirty = true;
+        } else if (settingsSelection == 2) {  // Refresh speed cycle backwards
+          int v = static_cast<int>(refreshSpeed);
+          refreshSpeed = static_cast<RefreshSpeed>((v - 1 + 3) % 3);
           screenDirty = true;
         }
       } else if (event.keyCode == HID_KEY_ESCAPE) {

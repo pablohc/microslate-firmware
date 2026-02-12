@@ -23,6 +23,23 @@ enum class Orientation : uint8_t {
   LANDSCAPE_CCW = 3     // LandscapeCounterClockwise
 };
 
+// --- Display Refresh Speed ---
+// Controls cooldown between e-ink refreshes. Longer = more battery savings, slower visual updates.
+enum class RefreshSpeed : uint8_t {
+  FAST     = 0,   // 100ms cooldown after refresh
+  BALANCED = 1,   // 300ms cooldown
+  SAVING   = 2    // 750ms cooldown
+};
+
+inline uint16_t refreshCooldownMs(RefreshSpeed speed) {
+  switch (speed) {
+    case RefreshSpeed::FAST:     return 100;
+    case RefreshSpeed::BALANCED: return 300;
+    case RefreshSpeed::SAVING:   return 750;
+    default:                     return 300;
+  }
+}
+
 // --- BLE Connection State ---
 enum class BLEState : uint8_t {
   DISCONNECTED,
