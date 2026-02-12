@@ -70,67 +70,6 @@ void deriveUniqueFilename(const char* title, char* out, int maxLen) {
   }
 }
 
-// On boot, recover any files left in an inconsistent state by a previous crash or power loss.
-static void recoverOrphanedFiles() {
-  auto root = SdMan.open("/notes");
-  if (!root || !root.isDirectory()) {
-    if (root) root.close();
-    return;
-  }
-
-  root.rewindDirectory();
-  char name[256];
-
-  for (auto file = root.openNextFile(); file; file = root.openNextFile()) {
-    file.getName(name, sizeof(name));
-    file.close();
-
-    if (name[0] == '.') continue;
-
-    int nameLen = strlen(name);
-
-    // Orphaned .tmp: no matching .txt exists → rename to .txt (interrupted save, new content)
-    if (nameLen > 4 && strcmp(name + nameLen - 4, ".tmp") == 0) {
-      char txtName[256];
-      strncpy(txtName, name, nameLen - 4);
-      txtName[nameLen - 4] = '\0';
-      strncat(txtName, ".txt", sizeof(txtName) - strlen(txtName) - 1);
-
-      char tmpPath[320], txtPath[320];
-      snprintf(tmpPath, sizeof(tmpPath), "/notes/%s", name);
-      snprintf(txtPath, sizeof(txtPath), "/notes/%s", txtName);
-
-      if (!SdMan.exists(txtPath)) {
-        SdMan.rename(tmpPath, txtPath);
-        DBG_PRINTF("Recovery: renamed orphaned %s -> %s\n", name, txtName);
-      }
-      continue;
-    }
-
-    // Empty .txt with a non-empty .bak → restore .bak (corrupt/interrupted save)
-    if (nameLen > 4 && strcmp(name + nameLen - 4, ".txt") == 0) {
-      char bakName[256];
-      strncpy(bakName, name, sizeof(bakName) - 1);
-      strncat(bakName, ".bak", sizeof(bakName) - strlen(bakName) - 1);
-
-      char txtPath[320], bakPath[320];
-      snprintf(txtPath, sizeof(txtPath), "/notes/%s", name);
-      snprintf(bakPath, sizeof(bakPath), "/notes/%s", bakName);
-
-      auto txtFile = SdMan.open(txtPath, O_RDONLY);
-      size_t txtSize = txtFile ? txtFile.size() : 0;
-      if (txtFile) txtFile.close();
-
-      if (txtSize == 0 && SdMan.exists(bakPath)) {
-        SdMan.remove(txtPath);
-        SdMan.rename(bakPath, txtPath);
-        DBG_PRINTF("Recovery: restored %s from .bak\n", name);
-      }
-    }
-  }
-  root.close();
-}
-
 void fileManagerSetup() {
   if (!SdMan.begin()) {
     DBG_PRINTLN("SD Card mount failed!");
@@ -140,8 +79,6 @@ void fileManagerSetup() {
   if (!SdMan.exists("/notes")) {
     SdMan.mkdir("/notes");
   }
-
-  recoverOrphanedFiles();
 
   DBG_PRINTLN("SD Card initialized");
   refreshFileList();
