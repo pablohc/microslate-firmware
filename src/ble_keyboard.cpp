@@ -37,6 +37,21 @@ static unsigned long reconnectDelay = 10000;  // Start at 10s (was 5s) — less 
 static unsigned long lastReconnectAttempt = 0;
 static constexpr unsigned long MAX_RECONNECT_DELAY = 120000;  // Cap at 2min (was 60s)
 
+// BLE connection parameters (in 1.25ms units)
+// Active typing: 30-50ms interval — responsive enough for keystroke delivery
+static constexpr uint16_t CONN_INTERVAL_ACTIVE_MIN = 24;   // 30ms
+static constexpr uint16_t CONN_INTERVAL_ACTIVE_MAX = 40;   // 50ms
+// Idle: 100-200ms interval — radio mostly sleeps between events
+static constexpr uint16_t CONN_INTERVAL_IDLE_MIN   = 80;   // 100ms
+static constexpr uint16_t CONN_INTERVAL_IDLE_MAX   = 160;  // 200ms
+static constexpr uint16_t CONN_SLAVE_LATENCY       = 4;    // Keyboard can skip 4 events
+static constexpr uint16_t CONN_SUPERVISION_TIMEOUT  = 400;  // 4s (10ms units)
+static constexpr unsigned long BLE_IDLE_SWITCH_MS   = 3000; // Switch to idle params after 3s no keystrokes
+
+// Activity tracking for adaptive connection parameters
+static unsigned long lastBleKeystrokeMs = 0;
+static bool bleConnIdleMode = false;
+
 // Device discovery variables
 static std::vector<BleDeviceInfo> discoveredDevices;
 static bool isScanning = false;
@@ -137,6 +152,9 @@ static void onKeyboardNotify(NimBLERemoteCharacteristic* pRemChar,
   }
 
   memcpy(lastReport, newReport, 8);
+
+  // Track activity for adaptive connection parameters
+  lastBleKeystrokeMs = millis();
 }
 
 // --- Callbacks (static instances, no heap allocation) ---
@@ -171,8 +189,16 @@ static class ClientCallbacks : public NimBLEClientCallbacks {
 
   bool onConnParamsUpdateRequest(NimBLEClient* pClient,
                                   const ble_gap_upd_params* params) override {
-    pClient->updateConnParams(params->itvl_min, params->itvl_max,
-                               params->latency, params->supervision_timeout);
+    // Don't blindly accept the keyboard's requested interval — enforce our floor.
+    // The keyboard may request 7.5-10ms intervals which wake the radio 100+ times/sec.
+    uint16_t floorMin = bleConnIdleMode ? CONN_INTERVAL_IDLE_MIN : CONN_INTERVAL_ACTIVE_MIN;
+    uint16_t floorMax = bleConnIdleMode ? CONN_INTERVAL_IDLE_MAX : CONN_INTERVAL_ACTIVE_MAX;
+    uint16_t itvlMin = (params->itvl_min > floorMin) ? params->itvl_min : floorMin;
+    uint16_t itvlMax = (params->itvl_max > floorMax) ? params->itvl_max : floorMax;
+    if (itvlMin > itvlMax) itvlMax = itvlMin;
+
+    pClient->updateConnParams(itvlMin, itvlMax,
+                               CONN_SLAVE_LATENCY, CONN_SUPERVISION_TIMEOUT);
     return true;
   }
 } clientCallbacks;
@@ -413,6 +439,12 @@ static void bleConnectTask(void* param) {
     storePairedDevice(keyboardAddress, devName);
   }
 
+  // Request our preferred connection parameters (active typing mode)
+  pClient->updateConnParams(CONN_INTERVAL_ACTIVE_MIN, CONN_INTERVAL_ACTIVE_MAX,
+                             CONN_SLAVE_LATENCY, CONN_SUPERVISION_TIMEOUT);
+  bleConnIdleMode = false;
+  lastBleKeystrokeMs = millis();
+
   DBG_PRINTLN("[BLE-Task] Keyboard ready!");
   bleState = BLEState::CONNECTED;
   reconnectDelay = 10000;  // Reset backoff after successful connection
@@ -445,7 +477,7 @@ void bleSetup() {
   NimBLEDevice::setSecurityInitKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
   NimBLEDevice::setSecurityRespKey(BLE_SM_PAIR_KEY_DIST_ENC | BLE_SM_PAIR_KEY_DIST_ID);
   NimBLEDevice::setSecurityCallbacks(&securityCallback);
-  NimBLEDevice::setPower(ESP_PWR_LVL_P3);  // +3dBm — plenty for nearby keyboard, saves radio power
+  NimBLEDevice::setPower(ESP_PWR_LVL_N0);  // 0dBm — sufficient for desk-distance keyboard, saves ~1-2mA
 
   prefs.begin("ble_kb", false);
 
@@ -484,6 +516,23 @@ void bleLoop() {
     connectToKeyboard = false;
     startConnectTask();
     return;
+  }
+
+  // Adaptive BLE connection parameters: fast interval while typing, slow when idle.
+  // Saves significant radio power during pauses between typing bursts.
+  if (bleState == BLEState::CONNECTED && pClient && pClient->isConnected()) {
+    unsigned long now = millis();
+    if (!bleConnIdleMode && (now - lastBleKeystrokeMs > BLE_IDLE_SWITCH_MS)) {
+      // No keystrokes for 3s — switch to slow polling to save radio power
+      pClient->updateConnParams(CONN_INTERVAL_IDLE_MIN, CONN_INTERVAL_IDLE_MAX,
+                                 CONN_SLAVE_LATENCY, CONN_SUPERVISION_TIMEOUT);
+      bleConnIdleMode = true;
+    } else if (bleConnIdleMode && (now - lastBleKeystrokeMs <= BLE_IDLE_SWITCH_MS)) {
+      // Keystroke arrived — switch back to fast polling for responsive typing
+      pClient->updateConnParams(CONN_INTERVAL_ACTIVE_MIN, CONN_INTERVAL_ACTIVE_MAX,
+                                 CONN_SLAVE_LATENCY, CONN_SUPERVISION_TIMEOUT);
+      bleConnIdleMode = false;
+    }
   }
 
   // Auto-reconnect to stored device (exponential backoff)
