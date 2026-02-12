@@ -260,6 +260,9 @@ static void processPhysicalButtons() {
     if (millis() - backPressStart > 5000) {
       restartTriggered = true;
       DBG_PRINTLN("BACK held for 5s — restarting device...");
+      if (currentState == UIState::TEXT_EDITOR && editorHasUnsavedChanges()) {
+        saveCurrentFile();
+      }
       delay(100);
       ESP.restart();
     }
@@ -344,6 +347,7 @@ static void processPhysicalButtons() {
         enqueueKeyEvent(HID_KEY_ENTER, 0, false);
       }
       if (btnBack && !btnBackLast) {
+        if (editorHasUnsavedChanges()) saveCurrentFile();
         currentState = UIState::FILE_BROWSER;
         screenDirty = true;
       }
@@ -498,6 +502,14 @@ void loop() {
   if (hadActivity) {
     registerActivity();
     lastInputTime = millis();
+  }
+
+  // Auto-save: persist unsaved work after 5s of inactivity
+  if (currentState == UIState::TEXT_EDITOR
+      && editorHasUnsavedChanges()
+      && editorGetCurrentFile()[0] != '\0'
+      && (millis() - lastInputTime) > AUTO_SAVE_INTERVAL_MS) {
+    saveCurrentFile(false);  // Skip refreshFileList — file list unchanged by content update
   }
 
   // Cooldown-based screen refresh: the e-ink refresh (~430ms) IS the rate limiter.

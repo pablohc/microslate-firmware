@@ -138,12 +138,10 @@ static void handleEditorKey(uint8_t keyCode, uint8_t modifiers) {
       screenDirty = true;
       return;
     }
-    return;
-  }
-
-  // Ctrl+T = edit title
-  if (isCtrl(modifiers) && keyCode == HID_KEY_T) {
-    openTitleEdit(editorGetCurrentTitle(), UIState::TEXT_EDITOR);
+    if (keyCode == HID_KEY_T) {
+      openTitleEdit(editorGetCurrentTitle(), UIState::TEXT_EDITOR);
+      return;
+    }
     return;
   }
 

@@ -65,6 +65,9 @@ struct FileInfo {
   unsigned long modTime;
 };
 
+// --- Auto-save interval (milliseconds of inactivity before background save) ---
+static constexpr unsigned long AUTO_SAVE_INTERVAL_MS = 2000;
+
 // --- Buffer/Queue Sizes ---
 static constexpr size_t TEXT_BUFFER_SIZE = 16384;
 static constexpr int MAX_FILES = 50;
