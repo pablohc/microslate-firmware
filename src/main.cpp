@@ -504,11 +504,16 @@ void loop() {
     lastInputTime = millis();
   }
 
-  // Auto-save: persist unsaved work after 5s of inactivity
+  // Auto-save: persist unsaved work after inactivity.
+  // lastAutoSaveMs is stamped BEFORE the attempt so a failed save doesn't
+  // immediately retry on the next loop iteration (which would hammer the SD card).
+  static unsigned long lastAutoSaveMs = 0;
   if (currentState == UIState::TEXT_EDITOR
       && editorHasUnsavedChanges()
       && editorGetCurrentFile()[0] != '\0'
-      && (millis() - lastInputTime) > AUTO_SAVE_INTERVAL_MS) {
+      && (millis() - lastInputTime) > AUTO_SAVE_INTERVAL_MS
+      && (millis() - lastAutoSaveMs) > AUTO_SAVE_INTERVAL_MS) {
+    lastAutoSaveMs = millis();
     saveCurrentFile(false);  // Skip refreshFileList — file list unchanged by content update
   }
 
