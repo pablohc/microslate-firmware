@@ -345,19 +345,19 @@ void drawRenameScreen(GfxRenderer& renderer, HalGPIO& gpio) {
   clippedLine(renderer, 5, 32, sw - 5, 32, tc);
 
   drawClippedText(renderer, FONT_SMALL, 20, 42, "Note title:", 0, tc);
-  int boxY = 62, boxH = 28;
-  int textY = boxY + 5;
+  int boxY = 64, boxH = 36;
+  int textY = boxY + 8;
   renderer.drawRect(15, boxY, sw - 30, boxH, tc);
   drawClippedText(renderer, FONT_UI, 20, textY, renameBuffer, sw - 50, tc);
 
   // Cursor — thin bar aligned with text
   int cursorX = 20 + renderer.getTextAdvanceX(FONT_UI, renameBuffer);
   if (cursorX + 2 < sw - 15)
-    renderer.fillRect(cursorX, textY + 1, 2, 14, tc);
+    renderer.fillRect(cursorX, textY, 2, 16, tc);
 
   // Footer
-  clippedLine(renderer, 5, sh - 28, sw - 5, sh - 28, tc);
-  drawClippedText(renderer, FONT_SMALL, 10, sh - 22, "Enter: Confirm   Esc: Cancel", 0, tc);
+  clippedLine(renderer, 5, sh - 36, sw - 5, sh - 36, tc);
+  drawClippedText(renderer, FONT_SMALL, 10, sh - 30, "Enter: Confirm   Esc: Cancel", 0, tc);
 
   renderer.displayBuffer(HalDisplay::FAST_REFRESH);
 }
