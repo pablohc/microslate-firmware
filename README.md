@@ -143,58 +143,49 @@ A scan runs for 5 seconds and then stops. Up to 10 nearby devices are shown with
 
 ### WiFi Sync
 
-Select **Sync** from the main menu to back up all notes to your PC over WiFi.
+Back up all notes from the device to your PC over WiFi. The device and PC must be on the **same WiFi network**.
 
-**First time:** the device scans for WiFi networks, you pick one and enter the password. It asks if you want to save the credentials.
+#### One-time PC setup
 
-**After that:** the device auto-connects using saved credentials — no network selection needed.
+1. Install [Python 3](https://www.python.org/downloads/) if you don't have it
+2. Install the required library:
+   ```bash
+   pip install requests
+   ```
+3. Double-click **`sync\install_sync.bat`** to make the sync script run automatically on login
 
-Once connected, the device shows its IP address and waits for the PC sync script. Run the script, it downloads all notes, then signals the device it's done. The device shows a summary and turns WiFi off automatically.
+That's it. The script runs silently in the background — no window, no tray icon. Notes are saved to `Documents\MicroSlate Notes\` by default (edit `LOCAL_DIR` in `microslate_sync.py` to change).
+
+To stop auto-start later, double-click **`sync\uninstall_sync.bat`**.
+
+#### Syncing
+
+1. Select **Sync** from the main menu on the device
+2. **First time:** pick your WiFi network and enter the password. The device asks to save credentials.
+3. **After that:** the device auto-connects — just press Sync and wait
+4. The device shows "Waiting for PC..." while the background script syncs your notes
+5. When done, the device shows a summary and turns WiFi off automatically
+
+If the sync script isn't running, you can start it manually:
+```bash
+python sync/microslate_sync.py
+```
+
+#### How sync works
+
+- One-way backup: device → PC. Nothing is ever uploaded or deleted.
+- Files already on the PC with the same name and size are skipped
+- Files deleted from the device are **not** deleted from the PC — they stay as a backup
+- The device HTTP server is **read-only** — no one on the network can modify or delete files
+- WiFi turns off automatically after sync completes or after 60 seconds of no activity
+
+#### Sync controls
 
 | Key | Action |
 |-----|--------|
 | Up / Down | Navigate network list |
 | Enter | Select network / confirm |
 | Esc | Cancel / back |
-
-**Safety features:**
-- The HTTP server is **read-only** — no one on the network can modify or delete files on the device
-- WiFi turns off automatically after sync completes or after 60 seconds of no activity
-- Saved WiFi passwords are stored on-device in NVS (non-volatile storage)
-
-#### PC Sync Script Setup
-
-The sync script requires Python 3 and the `requests` library.
-
-```bash
-pip install requests
-```
-
-**Manual sync:**
-
-```bash
-python sync/microslate_sync.py
-```
-
-The script waits for the device to appear, downloads all notes to `~/OneDrive/Documents/MicroSlate Notes/`, then exits. Edit `LOCAL_DIR` in the script to change the destination folder.
-
-**Auto-start on login (Windows):**
-
-```bash
-sync\install_sync.bat
-```
-
-This creates a Windows scheduled task that runs the sync script in the background every time you log in. To remove it:
-
-```bash
-sync\uninstall_sync.bat
-```
-
-**How sync works:**
-- All `.txt` files on the device are downloaded to the PC folder
-- Files already on the PC with the same name and size are skipped
-- Files deleted from the device are **not** deleted from the PC — they remain as a backup
-- Nothing is ever uploaded to the device — sync is one-way (device → PC)
 
 ## File Format
 
