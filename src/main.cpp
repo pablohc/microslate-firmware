@@ -106,6 +106,7 @@ void setup() {
   display.begin();
 
   renderer.setOrientation(GfxRenderer::Portrait);
+  renderer.setFadingFix(true);  // Power down display analog circuits after each refresh — reduces idle drain
   rendererSetup(renderer);
 
   editorInit();
