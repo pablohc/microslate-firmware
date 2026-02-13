@@ -116,6 +116,7 @@ void refreshFileList() {
     file.close();
   }
   root.close();
+  SdMan.sleep();
 
   DBG_PRINTF("File listing: %d files found\n", fileCount);
 }

@@ -529,17 +529,21 @@ void loop() {
     lastInputTime = millis();
   }
 
-  // Auto-save: persist unsaved work after inactivity.
-  // lastAutoSaveMs is stamped BEFORE the attempt so a failed save doesn't
-  // immediately retry on the next loop iteration (which would hammer the SD card).
+  // Auto-save: hybrid idle + hard cap for crash protection.
+  // - Saves after 10s of no keystrokes (catches natural pauses between sentences)
+  // - Hard cap every 2min during continuous typing (never lose more than 2min of work)
   static unsigned long lastAutoSaveMs = 0;
   if (currentState == UIState::TEXT_EDITOR
       && editorHasUnsavedChanges()
-      && editorGetCurrentFile()[0] != '\0'
-      && (millis() - lastInputTime) > AUTO_SAVE_INTERVAL_MS
-      && (millis() - lastAutoSaveMs) > AUTO_SAVE_INTERVAL_MS) {
-    lastAutoSaveMs = millis();
-    saveCurrentFile(false);  // Skip refreshFileList — file list unchanged by content update
+      && editorGetCurrentFile()[0] != '\0') {
+    unsigned long now = millis();
+    bool idleTrigger = (now - lastInputTime) > AUTO_SAVE_IDLE_MS
+                    && (now - lastAutoSaveMs) > AUTO_SAVE_IDLE_MS;
+    bool capTrigger  = (now - lastAutoSaveMs) > AUTO_SAVE_MAX_MS;
+    if (idleTrigger || capTrigger) {
+      lastAutoSaveMs = now;
+      saveCurrentFile(false);  // Skip refreshFileList — file list unchanged by content update
+    }
   }
 
   // Periodically refresh sync screen to show status changes (every 2s)

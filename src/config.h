@@ -66,8 +66,9 @@ struct FileInfo {
   unsigned long modTime;
 };
 
-// --- Auto-save interval (milliseconds of inactivity before background save) ---
-static constexpr unsigned long AUTO_SAVE_INTERVAL_MS = 30000;
+// --- Auto-save timing ---
+static constexpr unsigned long AUTO_SAVE_IDLE_MS = 10000;    // Save after 10s of no keystrokes
+static constexpr unsigned long AUTO_SAVE_MAX_MS  = 120000;   // Hard cap: save every 2min during continuous typing
 
 // --- Buffer/Queue Sizes ---
 static constexpr size_t TEXT_BUFFER_SIZE = 16384;
