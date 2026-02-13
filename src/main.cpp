@@ -278,11 +278,11 @@ static void processPhysicalButtons() {
   // Map physical buttons to HID key codes based on current UI state
   switch (currentState) {
     case UIState::MAIN_MENU:
-      if (btnUp && !btnUpLast) {
+      if ((btnUp && !btnUpLast) || (btnLeft && !btnLeftLast)) {
         enqueueKeyEvent(HID_KEY_UP, 0, true);
         enqueueKeyEvent(HID_KEY_UP, 0, false);
       }
-      if (btnDown && !btnDownLast) {
+      if ((btnDown && !btnDownLast) || (btnRight && !btnRightLast)) {
         enqueueKeyEvent(HID_KEY_DOWN, 0, true);
         enqueueKeyEvent(HID_KEY_DOWN, 0, false);
       }
@@ -293,11 +293,11 @@ static void processPhysicalButtons() {
       break;
 
     case UIState::FILE_BROWSER:
-      if (btnUp && !btnUpLast && getFileCount() > 0) {
+      if (((btnUp && !btnUpLast) || (btnLeft && !btnLeftLast)) && getFileCount() > 0) {
         enqueueKeyEvent(HID_KEY_UP, 0, true);
         enqueueKeyEvent(HID_KEY_UP, 0, false);
       }
-      if (btnDown && !btnDownLast && getFileCount() > 0) {
+      if (((btnDown && !btnDownLast) || (btnRight && !btnRightLast)) && getFileCount() > 0) {
         enqueueKeyEvent(HID_KEY_DOWN, 0, true);
         enqueueKeyEvent(HID_KEY_DOWN, 0, false);
       }
@@ -370,11 +370,11 @@ static void processPhysicalButtons() {
       break;
 
     case UIState::BLUETOOTH_SETTINGS:
-      if (btnUp && !btnUpLast) {
+      if ((btnUp && !btnUpLast) || (btnLeft && !btnLeftLast)) {
         enqueueKeyEvent(HID_KEY_UP, 0, true);
         enqueueKeyEvent(HID_KEY_UP, 0, false);
       }
-      if (btnDown && !btnDownLast) {
+      if ((btnDown && !btnDownLast) || (btnRight && !btnRightLast)) {
         enqueueKeyEvent(HID_KEY_DOWN, 0, true);
         enqueueKeyEvent(HID_KEY_DOWN, 0, false);
       }
@@ -389,11 +389,11 @@ static void processPhysicalButtons() {
       break;
 
     case UIState::WIFI_SYNC:
-      if (btnUp && !btnUpLast) {
+      if ((btnUp && !btnUpLast) || (btnLeft && !btnLeftLast)) {
         enqueueKeyEvent(HID_KEY_UP, 0, true);
         enqueueKeyEvent(HID_KEY_UP, 0, false);
       }
-      if (btnDown && !btnDownLast) {
+      if ((btnDown && !btnDownLast) || (btnRight && !btnRightLast)) {
         enqueueKeyEvent(HID_KEY_DOWN, 0, true);
         enqueueKeyEvent(HID_KEY_DOWN, 0, false);
       }
