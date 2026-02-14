@@ -12,6 +12,9 @@ extern bool autoReconnectEnabled;
 extern bool darkMode;
 extern bool cleanMode;
 extern bool deleteConfirmPending;
+extern WritingMode writingMode;
+extern BlindDelay blindDelay;
+extern bool blindScreenActive;
 
 // External functions
 void storePairedDevice(const std::string& address, const std::string& name);
@@ -139,9 +142,41 @@ static void handleEditorKey(uint8_t keyCode, uint8_t modifiers) {
       screenDirty = true;
       return;
     }
-    if (keyCode == HID_KEY_T) {
+    if (keyCode == HID_KEY_N) {
       openTitleEdit(editorGetCurrentTitle(), UIState::TEXT_EDITOR);
       return;
+    }
+    if (keyCode == HID_KEY_B) {
+      writingMode = (writingMode == WritingMode::BLIND) ? WritingMode::NORMAL : WritingMode::BLIND;
+      blindScreenActive = false;
+      screenDirty = true;
+      return;
+    }
+    if (keyCode == HID_KEY_T) {
+      writingMode = (writingMode == WritingMode::TYPEWRITER) ? WritingMode::NORMAL : WritingMode::TYPEWRITER;
+      blindScreenActive = false;
+      screenDirty = true;
+      return;
+    }
+    if (keyCode == HID_KEY_P) {
+      writingMode = (writingMode == WritingMode::PAGINATION) ? WritingMode::NORMAL : WritingMode::PAGINATION;
+      blindScreenActive = false;
+      screenDirty = true;
+      return;
+    }
+    // Ctrl+Left/Right: jump pages in pagination mode
+    if (writingMode == WritingMode::PAGINATION) {
+      int pageSize = editorGetStoredVisibleLines();
+      if (keyCode == HID_KEY_LEFT) {
+        for (int i = 0; i < pageSize; i++) editorMoveCursorUp();
+        screenDirty = true;
+        return;
+      }
+      if (keyCode == HID_KEY_RIGHT) {
+        for (int i = 0; i < pageSize; i++) editorMoveCursorDown();
+        screenDirty = true;
+        return;
+      }
     }
     return;
   }
@@ -150,6 +185,15 @@ static void handleEditorKey(uint8_t keyCode, uint8_t modifiers) {
   if (keyCode == HID_KEY_ESCAPE) {
     if (editorHasUnsavedChanges()) saveCurrentFile();
     currentState = UIState::FILE_BROWSER;
+    screenDirty = true;
+    return;
+  }
+
+  // Tab cycles writing modes: Normal → Blind → Typewriter → Pagination
+  if (keyCode == HID_KEY_TAB) {
+    int v = static_cast<int>(writingMode);
+    writingMode = static_cast<WritingMode>((v + 1) % 4);
+    blindScreenActive = false;
     screenDirty = true;
     return;
   }
@@ -299,7 +343,7 @@ static void dispatchEvent(const KeyEvent& event) {
         FileInfo* files = getFileList();
         loadFile(files[selectedFileIndex].filename);
         screenDirty = true;
-      } else if (isCtrl(event.modifiers) && event.keyCode == HID_KEY_T) {
+      } else if (isCtrl(event.modifiers) && event.keyCode == HID_KEY_N) {
         if (fc > 0) {
           FileInfo* files = getFileList();
           openTitleEdit(files[selectedFileIndex].title, UIState::FILE_BROWSER);
@@ -325,45 +369,58 @@ static void dispatchEvent(const KeyEvent& event) {
       break;
 
     case UIState::SETTINGS: {
-      const int SETTINGS_COUNT = 5;  // Orientation, Dark Mode, Refresh Speed, Bluetooth, Clear Paired
+      const int SETTINGS_COUNT = 7;  // Orientation, Dark Mode, Refresh Speed, Writing Mode, Blind Delay, Bluetooth, Clear Paired
+
+      // Up/Down: navigate settings list (physical buttons also map here)
       if (event.keyCode == HID_KEY_DOWN) {
         settingsSelection = (settingsSelection + 1) % SETTINGS_COUNT;
         screenDirty = true;
       } else if (event.keyCode == HID_KEY_UP) {
         settingsSelection = (settingsSelection - 1 + SETTINGS_COUNT) % SETTINGS_COUNT;
         screenDirty = true;
-      } else if (event.keyCode == HID_KEY_RIGHT || event.keyCode == HID_KEY_ENTER) {
+
+      // Enter or Right: cycle setting forward
+      } else if (event.keyCode == HID_KEY_ENTER || event.keyCode == HID_KEY_RIGHT) {
         if (settingsSelection == 0) {
           int v = static_cast<int>(currentOrientation);
           currentOrientation = static_cast<Orientation>((v + 1) % 4);
-          screenDirty = true;
-        } else if (settingsSelection == 1) {  // Dark mode toggle
+        } else if (settingsSelection == 1) {
           darkMode = !darkMode;
-          screenDirty = true;
-        } else if (settingsSelection == 2) {  // Refresh speed cycle
+        } else if (settingsSelection == 2) {
           int v = static_cast<int>(refreshSpeed);
           refreshSpeed = static_cast<RefreshSpeed>((v + 1) % 3);
-          screenDirty = true;
-        } else if (settingsSelection == 3) {  // Bluetooth settings
+        } else if (settingsSelection == 3) {
+          int v = static_cast<int>(writingMode);
+          writingMode = static_cast<WritingMode>((v + 1) % 4);
+        } else if (settingsSelection == 4) {
+          int v = static_cast<int>(blindDelay);
+          blindDelay = static_cast<BlindDelay>((v + 1) % 4);
+        } else if (settingsSelection == 5) {
           currentState = UIState::BLUETOOTH_SETTINGS;
-          screenDirty = true;
-        } else if (settingsSelection == 4) {  // Clear paired device
+        } else if (settingsSelection == 6) {
           clearAllBluetoothBonds();
-          screenDirty = true;
         }
+        screenDirty = true;
+
+      // Left: cycle setting backward (keyboard only — physical L/R map to Up/Down)
       } else if (event.keyCode == HID_KEY_LEFT) {
         if (settingsSelection == 0) {
           int v = static_cast<int>(currentOrientation);
           currentOrientation = static_cast<Orientation>((v - 1 + 4) % 4);
-          screenDirty = true;
-        } else if (settingsSelection == 1) {  // Dark mode toggle
+        } else if (settingsSelection == 1) {
           darkMode = !darkMode;
-          screenDirty = true;
-        } else if (settingsSelection == 2) {  // Refresh speed cycle backwards
+        } else if (settingsSelection == 2) {
           int v = static_cast<int>(refreshSpeed);
           refreshSpeed = static_cast<RefreshSpeed>((v - 1 + 3) % 3);
-          screenDirty = true;
+        } else if (settingsSelection == 3) {
+          int v = static_cast<int>(writingMode);
+          writingMode = static_cast<WritingMode>((v - 1 + 4) % 4);
+        } else if (settingsSelection == 4) {
+          int v = static_cast<int>(blindDelay);
+          blindDelay = static_cast<BlindDelay>((v - 1 + 4) % 4);
         }
+        screenDirty = true;
+
       } else if (event.keyCode == HID_KEY_ESCAPE) {
         currentState = UIState::MAIN_MENU;
         screenDirty = true;

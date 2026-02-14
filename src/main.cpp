@@ -54,6 +54,10 @@ bool darkMode = false;
 RefreshSpeed refreshSpeed = RefreshSpeed::BALANCED;
 bool cleanMode = false;
 bool deleteConfirmPending = false;
+WritingMode writingMode = WritingMode::NORMAL;
+BlindDelay blindDelay = BlindDelay::THREE_SEC;
+unsigned long lastKeystrokeMs = 0;
+bool blindScreenActive = false;  // true = sunglasses showing, false = text showing
 
 // --- Screen update ---
 static void updateScreen() {
@@ -137,6 +141,8 @@ void setup() {
   currentOrientation = static_cast<Orientation>(uiPrefs.getUChar("orient", 0));
   darkMode = uiPrefs.getBool("darkMode", false);
   refreshSpeed = static_cast<RefreshSpeed>(uiPrefs.getUChar("refreshSpd", 1)); // default BALANCED
+  writingMode = static_cast<WritingMode>(uiPrefs.getUChar("writeMode", 0));
+  blindDelay = static_cast<BlindDelay>(uiPrefs.getUChar("blindDly", 1)); // default THREE_SEC
 
   // Initialize auto-reconnect to enabled by default
   autoReconnectEnabled = true;
@@ -408,21 +414,13 @@ static void processPhysicalButtons() {
       break;
 
     case UIState::SETTINGS:
-      if (btnUp && !btnUpLast) {
+      if ((btnUp && !btnUpLast) || (btnLeft && !btnLeftLast)) {
         enqueueKeyEvent(HID_KEY_UP, 0, true);
         enqueueKeyEvent(HID_KEY_UP, 0, false);
       }
-      if (btnDown && !btnDownLast) {
+      if ((btnDown && !btnDownLast) || (btnRight && !btnRightLast)) {
         enqueueKeyEvent(HID_KEY_DOWN, 0, true);
         enqueueKeyEvent(HID_KEY_DOWN, 0, false);
-      }
-      if (btnLeft && !btnLeftLast) {
-        enqueueKeyEvent(HID_KEY_LEFT, 0, true);
-        enqueueKeyEvent(HID_KEY_LEFT, 0, false);
-      }
-      if (btnRight && !btnRightLast) {
-        enqueueKeyEvent(HID_KEY_RIGHT, 0, true);
-        enqueueKeyEvent(HID_KEY_RIGHT, 0, false);
       }
       if (btnConfirm && !btnConfirmLast) {
         enqueueKeyEvent(HID_KEY_ENTER, 0, true);
@@ -527,6 +525,9 @@ void loop() {
   if (hadActivity) {
     registerActivity();
     lastInputTime = millis();
+    if (currentState == UIState::TEXT_EDITOR) {
+      lastKeystrokeMs = millis();
+    }
   }
 
   // Auto-save: hybrid idle + hard cap for crash protection.
@@ -565,11 +566,32 @@ void loop() {
   // Cooldown only applies to the text editor — all menus refresh instantly for responsiveness
   bool criticalUpdate = (currentState != UIState::TEXT_EDITOR);
 
+  // Blind mode only applies in the editor — reset when navigating away
+  if (criticalUpdate) blindScreenActive = false;
+
   if (screenDirty) {
-    bool cooldownMet = (now - lastRefreshDoneMs >= refreshCooldownMs(refreshSpeed));
-    if (criticalUpdate || cooldownMet) {
-      updateScreen();
-      lastRefreshDoneMs = millis();  // Use millis() AFTER refresh (which blocks ~430ms)
+    if (writingMode == WritingMode::BLIND && currentState == UIState::TEXT_EDITOR) {
+      // Blind mode: two refresh triggers per typing burst:
+      // 1. When typing starts → show sunglasses screen
+      // 2. When typing stops (after delay) → show accumulated text
+      if ((now - lastKeystrokeMs) >= blindDelayMs(blindDelay)) {
+        // User stopped typing — show text
+        blindScreenActive = false;
+        updateScreen();
+        lastRefreshDoneMs = millis();
+      } else if (!blindScreenActive) {
+        // User just started typing — show blind screen once
+        blindScreenActive = true;
+        updateScreen();
+        lastRefreshDoneMs = millis();
+      }
+      // else: typing continues, blind screen already showing — suppress
+    } else {
+      bool cooldownMet = (now - lastRefreshDoneMs >= refreshCooldownMs(refreshSpeed));
+      if (criticalUpdate || cooldownMet) {
+        updateScreen();
+        lastRefreshDoneMs = millis();
+      }
     }
   }
 
@@ -577,14 +599,21 @@ void loop() {
   static Orientation lastSavedOrientation = currentOrientation;
   static bool lastSavedDarkMode = darkMode;
   static RefreshSpeed lastSavedRefreshSpeed = refreshSpeed;
+  static WritingMode lastSavedWritingMode = writingMode;
+  static BlindDelay lastSavedBlindDelay = blindDelay;
   if (currentOrientation != lastSavedOrientation || darkMode != lastSavedDarkMode
-      || refreshSpeed != lastSavedRefreshSpeed) {
+      || refreshSpeed != lastSavedRefreshSpeed
+      || writingMode != lastSavedWritingMode || blindDelay != lastSavedBlindDelay) {
     uiPrefs.putUChar("orient", static_cast<uint8_t>(currentOrientation));
     uiPrefs.putBool("darkMode", darkMode);
     uiPrefs.putUChar("refreshSpd", static_cast<uint8_t>(refreshSpeed));
+    uiPrefs.putUChar("writeMode", static_cast<uint8_t>(writingMode));
+    uiPrefs.putUChar("blindDly", static_cast<uint8_t>(blindDelay));
     lastSavedOrientation = currentOrientation;
     lastSavedDarkMode = darkMode;
     lastSavedRefreshSpeed = refreshSpeed;
+    lastSavedWritingMode = writingMode;
+    lastSavedBlindDelay = blindDelay;
   }
 
   // Check for idle timeout (skip while WiFi sync is active)

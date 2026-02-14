@@ -264,6 +264,10 @@ void editorSetVisibleLines(int n) {
   if (n > 0) storedVisibleLines = n;
 }
 
+int editorGetStoredVisibleLines() {
+  return storedVisibleLines;
+}
+
 int editorGetVisibleLines(int lineHeight, int textAreaHeight) {
   if (lineHeight <= 0) return 20;
   return textAreaHeight / lineHeight;
