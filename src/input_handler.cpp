@@ -164,6 +164,20 @@ static void handleEditorKey(uint8_t keyCode, uint8_t modifiers) {
       screenDirty = true;
       return;
     }
+    // Ctrl+Left/Right: jump pages in pagination mode
+    if (writingMode == WritingMode::PAGINATION) {
+      int pageSize = editorGetStoredVisibleLines();
+      if (keyCode == HID_KEY_LEFT) {
+        for (int i = 0; i < pageSize; i++) editorMoveCursorUp();
+        screenDirty = true;
+        return;
+      }
+      if (keyCode == HID_KEY_RIGHT) {
+        for (int i = 0; i < pageSize; i++) editorMoveCursorDown();
+        screenDirty = true;
+        return;
+      }
+    }
     return;
   }
 
@@ -171,6 +185,15 @@ static void handleEditorKey(uint8_t keyCode, uint8_t modifiers) {
   if (keyCode == HID_KEY_ESCAPE) {
     if (editorHasUnsavedChanges()) saveCurrentFile();
     currentState = UIState::FILE_BROWSER;
+    screenDirty = true;
+    return;
+  }
+
+  // Tab cycles writing modes: Normal → Blind → Typewriter → Pagination
+  if (keyCode == HID_KEY_TAB) {
+    int v = static_cast<int>(writingMode);
+    writingMode = static_cast<WritingMode>((v + 1) % 4);
+    blindScreenActive = false;
     screenDirty = true;
     return;
   }

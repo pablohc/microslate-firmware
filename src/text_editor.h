@@ -27,6 +27,7 @@ void editorMoveCursorEnd();
 // Line/viewport management
 void editorSetCharsPerLine(int cpl);
 void editorSetVisibleLines(int n);   // Tell editor how many lines are visible on screen
+int editorGetStoredVisibleLines();   // Get the last set visible lines count
 void editorRecalculateLines();
 int editorGetVisibleLines(int lineHeight, int textAreaHeight);
 int editorGetViewportStart();

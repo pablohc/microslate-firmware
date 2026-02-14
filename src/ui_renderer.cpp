@@ -289,9 +289,20 @@ static void drawEditorCursor(GfxRenderer& renderer, int cursorY, int lineHeight,
   }
 }
 
+// Get the mode indicator string for the current writing mode
+static const char* getModeIndicator() {
+  switch (writingMode) {
+    case WritingMode::BLIND:      return "[B]";
+    case WritingMode::TYPEWRITER: return "[T]";
+    case WritingMode::PAGINATION: return "[P]";
+    default:                      return "[S]";
+  }
+}
+
 // Helper: draw the standard editor header, returns textAreaTop
+// centerText is optional text drawn centered in the header (e.g. "Page 1/3")
 static int drawEditorHeader(GfxRenderer& renderer, HalGPIO& gpio, int sw, bool tc,
-                            const char* modeIndicator = nullptr) {
+                            const char* centerText = nullptr) {
   if (cleanMode) return 8;
 
   const char* title = editorGetCurrentTitle();
@@ -304,11 +315,16 @@ static int drawEditorHeader(GfxRenderer& renderer, HalGPIO& gpio, int sw, bool t
   }
   drawClippedText(renderer, FONT_SMALL, 10, 5, headerBuf, sw - 100, tc, EpdFontFamily::BOLD);
 
-  // Mode indicator in header (before battery)
-  if (modeIndicator) {
-    int indW = renderer.getTextAdvanceX(FONT_SMALL, modeIndicator);
-    drawClippedText(renderer, FONT_SMALL, sw - 55 - indW, 5, modeIndicator, indW + 5, tc);
+  // Centered text (e.g. page indicator)
+  if (centerText) {
+    int ctW = renderer.getTextAdvanceX(FONT_SMALL, centerText);
+    drawClippedText(renderer, FONT_SMALL, (sw - ctW) / 2, 5, centerText, ctW + 5, tc);
   }
+
+  // Mode indicator (always shown, before battery)
+  const char* modeInd = getModeIndicator();
+  int indW = renderer.getTextAdvanceX(FONT_SMALL, modeInd);
+  drawClippedText(renderer, FONT_SMALL, sw - 55 - indW, 5, modeInd, indW + 5, tc);
 
   drawBattery(renderer, gpio);
   clippedLine(renderer, 5, 32, sw - 5, 32, tc);
@@ -385,7 +401,7 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
   // --- TYPEWRITER MODE ---
   if (writingMode == WritingMode::TYPEWRITER) {
     // In clean mode (Ctrl+Z): just text on blank screen, no header
-    int textAreaTop = cleanMode ? 0 : drawEditorHeader(renderer, gpio, sw, tc, "[T]");
+    int textAreaTop = cleanMode ? 0 : drawEditorHeader(renderer, gpio, sw, tc);
 
     // Center the current line vertically
     int textAreaHeight = sh - textAreaTop;
@@ -407,19 +423,29 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
 
   // --- PAGINATION MODE ---
   if (writingMode == WritingMode::PAGINATION) {
-    int textAreaTop = drawEditorHeader(renderer, gpio, sw, tc);
+    // Pre-compute page info for the header
+    // Use a temporary linesPerPage estimate (will be exact since header height is fixed)
+    int tempTextTop = cleanMode ? 8 : 38;
+    int tempLinesPerPage = (sh - 5 - tempTextTop) / lineHeight;
+    if (tempLinesPerPage < 1) tempLinesPerPage = 1;
+    int currentPage = curLine / tempLinesPerPage;
+    int totalPages = (totalLines + tempLinesPerPage - 1) / tempLinesPerPage;
+    if (totalPages < 1) totalPages = 1;
 
-    int textAreaBottom = sh - 22;  // Leave room for page indicator
+    char pageStr[16];
+    snprintf(pageStr, sizeof(pageStr), "Pg %d/%d", currentPage + 1, totalPages);
+    int textAreaTop = drawEditorHeader(renderer, gpio, sw, tc, pageStr);
+
+    int textAreaBottom = sh - 5;
     int textAreaHeight = textAreaBottom - textAreaTop;
     int linesPerPage = textAreaHeight / lineHeight;
     if (linesPerPage < 1) linesPerPage = 1;
 
-    editorSetVisibleLines(linesPerPage);
-
-    int currentPage = curLine / linesPerPage;
+    // Recompute with actual linesPerPage if it differs
+    currentPage = curLine / linesPerPage;
     int pageStart = currentPage * linesPerPage;
-    int totalPages = (totalLines + linesPerPage - 1) / linesPerPage;
-    if (totalPages < 1) totalPages = 1;
+
+    editorSetVisibleLines(linesPerPage);
 
     // Draw lines for this page
     for (int i = 0; i < linesPerPage && (pageStart + i) < totalLines; i++) {
@@ -433,19 +459,12 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
       drawEditorCursor(renderer, cursorY, lineHeight, sw, tc);
     }
 
-    // Page indicator in footer
-    char pageStr[16];
-    snprintf(pageStr, sizeof(pageStr), "Page %d/%d", currentPage + 1, totalPages);
-    int pageW = renderer.getTextAdvanceX(FONT_SMALL, pageStr);
-    drawClippedText(renderer, FONT_SMALL, (sw - pageW) / 2, sh - 18, pageStr, 0, tc);
-
     renderer.displayBuffer(HalDisplay::FAST_REFRESH);
     return;
   }
 
   // --- NORMAL / BLIND MODE (blind mode renders the same as normal when refresh happens) ---
-  const char* modeInd = (writingMode == WritingMode::BLIND) ? "[B]" : nullptr;
-  int textAreaTop = drawEditorHeader(renderer, gpio, sw, tc, modeInd);
+  int textAreaTop = drawEditorHeader(renderer, gpio, sw, tc);
 
   int textAreaBottom = sh - 5;
   int textAreaHeight = textAreaBottom - textAreaTop;
