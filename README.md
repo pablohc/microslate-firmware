@@ -7,6 +7,11 @@ A dedicated writing firmware for the **Xteink X4** e-paper device. Pairs with an
 - **Note Management** — browse, create, rename, and delete notes from an SD card
 - **Named Notes** — each note has a title stored in the file; shown in the browser and editable without touching body text
 - **Text Editor** — cursor navigation, word-wrap, fast e-paper refresh
+- **Writing Modes** — four display modes to suit different writing styles and save battery:
+  - *Scroll* — standard scrolling editor (default)
+  - *Blind* — screen shows a sunglasses graphic while typing; refreshes to show accumulated text after a configurable delay of inactivity. Biggest battery saver
+  - *Typewriter* — shows only the current line centered on a blank screen. Focused, distraction-free single-line writing
+  - *Pagination* — page-based display instead of scrolling. Clean page flips instead of per-line scroll refreshes
 - **Auto-Save** — content is silently saved to SD card after 10 seconds of idle or every 2 minutes during continuous typing; no manual save required. Every exit path (back button, Esc, power button, sleep, restart) also saves automatically
 - **Safe Writes** — saves use a write-verify + `.bak` rotation pattern; a failed or interrupted write never destroys the previous version. Orphaned files from a crash are recovered automatically on next boot
 - **Clean Mode** — hides all UI chrome while editing so only your text is on screen (Ctrl+Z to toggle)
@@ -18,7 +23,7 @@ A dedicated writing firmware for the **Xteink X4** e-paper device. Pairs with an
 
 ## Hardware Requirements
 
-- Xteink X4 e-paper device (ESP32-C3, 800×480 display, physical buttons, SD slot)
+- Xteink X4 e-paper device (ESP32-C3, 800x480 display, physical buttons, SD slot)
 - MicroSD card formatted as FAT32
 - A Bluetooth HID keyboard
 
@@ -80,7 +85,7 @@ Options: **Browse Notes**, **New Note**, **Settings**, **Sync**
 | Up / Down | Navigate list |
 | Left / Right | Also navigate (convenient in landscape) |
 | Enter | Open note |
-| Ctrl+T | Edit title of selected note |
+| Ctrl+N | Edit title of selected note |
 | Ctrl+D | Delete selected note (confirmation required) |
 | Esc | Back to main menu |
 
@@ -93,16 +98,33 @@ When delete is pending, the footer shows `Delete? Enter:Yes  Esc:No`. Press Ente
 | Arrow keys | Move cursor |
 | Home / End | Start / end of line |
 | Backspace / Delete | Remove characters |
+| Tab | Cycle writing mode (Scroll → Blind → Typewriter → Pagination) |
 | Ctrl+S | Save manually |
-| Ctrl+T | Edit note title |
+| Ctrl+N | Edit note title |
 | Ctrl+Z | Toggle clean mode (hides UI chrome) |
+| Ctrl+B | Toggle Blind mode |
+| Ctrl+T | Toggle Typewriter mode |
+| Ctrl+P | Toggle Pagination mode |
+| Ctrl+Left / Right | Jump pages (Pagination mode only) |
 | Esc / Back button | Save and return to file browser |
+
+The current writing mode is shown in the header: **[S]** Scroll, **[B]** Blind, **[T]** Typewriter, **[P]** Pagination.
 
 Auto-save runs silently after 10 seconds of idle or every 2 minutes during continuous typing — Ctrl+S is only needed if you want to save immediately.
 
+### Writing Modes
+
+**Scroll [S]** — Standard scrolling editor. Text scrolls as the cursor moves down the page.
+
+**Blind [B]** — The screen displays a sunglasses graphic while you type. No display refreshes occur during active typing, which significantly extends battery life. After a configurable delay of inactivity (default 3 seconds), the screen refreshes to show all accumulated text. The delay is adjustable in Settings under "Blind Delay" (2s, 3s, 5s, 10s).
+
+**Typewriter [T]** — Only the current line is shown, centered vertically on a blank screen. When you press Enter, the previous line disappears and a fresh line appears. Text is still saved to the buffer normally. Combine with Clean Mode (Ctrl+Z) for a completely minimal writing experience.
+
+**Pagination [P]** — Instead of scrolling when text fills the screen, the display flips to a new blank page. The current page is shown in the header (e.g. "Pg 1/3"). Use Ctrl+Left and Ctrl+Right to jump between pages. Eliminates per-line scroll refreshes — only one refresh per page transition.
+
 ### Title Edit
 
-Accessed via Ctrl+T from the file browser or editor.
+Accessed via Ctrl+N from the file browser or editor.
 
 | Key | Action |
 |-----|--------|
@@ -113,22 +135,19 @@ Accessed via Ctrl+T from the file browser or editor.
 
 ### Settings
 
-| Key | Action |
-|-----|--------|
-| Up / Down | Navigate |
-| Enter or Right | Adjust / enter submenu |
-| Left | Adjust (orientation, dark mode) |
-| Esc | Back to main menu |
+Navigate with all four direction buttons (or Up/Down on keyboard). Press Enter (or confirm button) to cycle through a setting's values. On a keyboard, Left/Right also cycle values backward/forward.
 
-Options:
-- **Orientation** — cycles through portrait/landscape/inverted variants
-- **Dark Mode** — toggle inverted display
-- **Refresh Speed** — controls how often the screen updates while typing:
-  - *Fast* — refreshes as quickly as the display allows (~2.3/sec). Most responsive, uses the most battery
-  - *Balanced* — 250ms cooldown between refreshes (~1.5/sec). Default setting, good for most use
-  - *Battery Saver* — 750ms cooldown (~0.85/sec). Keystrokes batch up and appear together; noticeably slower but extends battery life significantly
-- **Bluetooth Settings** — submenu to scan and connect keyboards
-- **Clear Paired Device** — removes stored pairing from device memory
+| Setting | Values |
+|---------|--------|
+| Orientation | Portrait, Landscape CW, Inverted, Landscape CCW |
+| Dark Mode | Light / Dark |
+| Refresh Speed | Fast (~2.3/sec), Balanced (~1.5/sec, default), Battery Saver (~0.85/sec) |
+| Writing Mode | Normal, Blind, Typewriter, Pagination |
+| Blind Delay | 2s, 3s (default), 5s, 10s |
+| Bluetooth | Opens Bluetooth Settings submenu |
+| Clear Paired | Removes stored keyboard pairing |
+
+All settings persist across reboots.
 
 ### Bluetooth Settings
 
@@ -206,7 +225,7 @@ xteink-writer-firmware/
 │   ├── file_manager.cpp  — SD card file operations
 │   ├── ui_renderer.cpp   — screen rendering for all UI modes
 │   ├── wifi_sync.cpp     — WiFi sync server and state machine
-│   └── config.h          — hardware pins, buffer sizes, constants
+│   └── config.h          — enums, buffer sizes, constants
 ├── sync/
 │   ├── microslate_sync.py   — PC sync script (Python)
 │   ├── install_sync.bat     — register auto-start on Windows login

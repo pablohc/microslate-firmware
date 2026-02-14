@@ -414,11 +414,11 @@ static void processPhysicalButtons() {
       break;
 
     case UIState::SETTINGS:
-      if ((btnUp && !btnUpLast) || (btnLeft && !btnLeftLast)) {
+      if ((btnUp && !btnUpLast) || (btnRight && !btnRightLast)) {
         enqueueKeyEvent(HID_KEY_UP, 0, true);
         enqueueKeyEvent(HID_KEY_UP, 0, false);
       }
-      if ((btnDown && !btnDownLast) || (btnRight && !btnRightLast)) {
+      if ((btnDown && !btnDownLast) || (btnLeft && !btnLeftLast)) {
         enqueueKeyEvent(HID_KEY_DOWN, 0, true);
         enqueueKeyEvent(HID_KEY_DOWN, 0, false);
       }

@@ -321,10 +321,10 @@ static int drawEditorHeader(GfxRenderer& renderer, HalGPIO& gpio, int sw, bool t
     drawClippedText(renderer, FONT_SMALL, (sw - ctW) / 2, 5, centerText, ctW + 5, tc);
   }
 
-  // Mode indicator (always shown, before battery)
+  // Mode indicator (always shown, left of battery with gap)
   const char* modeInd = getModeIndicator();
   int indW = renderer.getTextAdvanceX(FONT_SMALL, modeInd);
-  drawClippedText(renderer, FONT_SMALL, sw - 55 - indW, 5, modeInd, indW + 5, tc);
+  drawClippedText(renderer, FONT_SMALL, sw - 70 - indW, 5, modeInd, indW + 5, tc);
 
   drawBattery(renderer, gpio);
   clippedLine(renderer, 5, 32, sw - 5, 32, tc);
@@ -388,6 +388,12 @@ void drawTextEditor(GfxRenderer& renderer, HalGPIO& gpio) {
     int labelW = renderer.getTextAdvanceX(FONT_UI, label);
     int labelY = smMy + (int)(lensH * 0.8);
     drawClippedText(renderer, FONT_UI, (sw - labelW) / 2, labelY, label, 0, tc);
+
+    // "blind mode" subtitle
+    const char* subtitle = "blind mode";
+    int subW = renderer.getTextAdvanceX(FONT_SMALL, subtitle);
+    int subY = labelY + renderer.getLineHeight(FONT_UI) + 4;
+    drawClippedText(renderer, FONT_SMALL, (sw - subW) / 2, subY, subtitle, 0, tc);
 
     renderer.displayBuffer(HalDisplay::FAST_REFRESH);
     return;
