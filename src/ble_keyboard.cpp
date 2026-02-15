@@ -2,10 +2,6 @@
 #include "input_handler.h"
 
 #include <NimBLEDevice.h>
-#include <NimBLEClient.h>
-#include <NimBLERemoteService.h>
-#include <NimBLERemoteCharacteristic.h>
-#include <NimBLERemoteDescriptor.h>
 #include <Preferences.h>
 
 // HID service and characteristic UUIDs

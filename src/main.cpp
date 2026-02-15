@@ -137,20 +137,20 @@ void setup() {
   bleSetup();
 
   // Enable automatic light sleep between loop iterations.
-  // FreeRTOS tickless idle will put the CPU to sleep whenever delay() yields
-  // the scheduler and no other tasks are runnable.  BLE stays alive, wake
-  // latency is <1ms — invisible to the user.
+  // CONFIG_PM_ENABLE and CONFIG_FREERTOS_USE_TICKLESS_IDLE are compiled into
+  // ESP-IDF via sdkconfig.defaults (framework = arduino, espidf). BLE modem
+  // sleep keeps the radio alive across sleep/wake cycles.
   {
-    esp_pm_config_esp32c3_t pm_config = {
+    esp_pm_config_t pm_config = {
       .max_freq_mhz      = 80,   // Never exceed 80MHz
-      .min_freq_mhz      = 40,   // Drop to 40MHz when idle
+      .min_freq_mhz      = 10,   // Drop to XTAL frequency when idle
       .light_sleep_enable = true
     };
     esp_err_t err = esp_pm_configure(&pm_config);
     if (err == ESP_OK) {
-      DBG_PRINTLN("[PM] Light sleep enabled (80/40MHz)");
+      DBG_PRINTLN("[PM] Light sleep enabled (80/10MHz)");
     } else {
-      DBG_PRINTF("[PM] Light sleep config failed: %d — running at 80MHz\n", err);
+      DBG_PRINTF("[PM] Light sleep config failed: %s\n", esp_err_to_name(err));
     }
   }
 
@@ -630,8 +630,8 @@ void loop() {
   }
 
   // Adaptive delay: shorter when active (responsive), longer when idle (saves power).
-  // FreeRTOS tickless idle triggers light sleep during delay(), so longer = more sleep.
-  // 20ms active aligns with BLE connection interval (30-50ms) — catches every keystroke
-  // without polling faster than BLE events arrive. 100ms idle for deeper sleep windows.
+  // With CONFIG_PM_ENABLE + tickless idle compiled in, delay() yields to FreeRTOS which
+  // enters real light sleep when no tasks are runnable. BLE modem sleep keeps the radio
+  // alive. 20ms active aligns with BLE connection interval — 100ms idle for deeper sleep.
   delay((hadActivity || screenDirty) ? 20 : 100);
 }
