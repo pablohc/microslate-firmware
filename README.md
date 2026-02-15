@@ -17,7 +17,7 @@ A dedicated writing firmware for the **Xteink X4** e-paper device. Pairs with an
 - **Clean Mode** — hides all UI chrome while editing so only your text is on screen (Ctrl+Z to toggle)
 - **Dark Mode** — inverted display
 - **Display Orientation** — portrait, landscape, and inverted variants
-- **Power Management** — CPU light-sleeps between events, SD card sleeps between accesses, display analog circuits power down after each refresh, and the device enters deep sleep after 5 minutes of inactivity
+- **Power Management** — SD card sleeps between accesses, display analog circuits power down after each refresh, and the device enters deep sleep after 5 minutes of inactivity
 - **WiFi Sync** — one-button backup of all notes to your PC over WiFi. Saves network credentials for instant reconnect. Read-only server — nothing on the device can be modified over the network
 - **Standalone Build** — all libraries are bundled in the repo; no sibling projects required
 
